@@ -1,0 +1,1005 @@
+<Window x:Class="StockPicker.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:StockPicker.ViewModels"
+        xmlns:conv="clr-namespace:StockPicker.Converters"
+        Title="{Binding SelectedStrategy.Name, StringFormat='Stock Picker — {0}', FallbackValue='Stock Picker'}"
+        Height="720" Width="1400"
+        MinWidth="600" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded"
+        SizeChanged="Window_SizeChanged">
+
+    <Window.DataContext>
+        <vm:MainViewModel />
+    </Window.DataContext>
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:LayoutModeToVisibilityConverter x:Key="LayoutModeToVisibility" />
+        <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility" />
+
+        <!-- Proxy that forwards the DataContext into DataGridColumn children,
+             which don't participate in the visual tree. -->
+        <conv:BindingProxy x:Key="VMProxy" Data="{Binding}" />
+
+        <!-- ── Shared styles ──────────────────────────────────────────────── -->
+        <Style TargetType="GroupBox">
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Margin"  Value="0" />
+        </Style>
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
+        <Style x:Key="ColPickerCheck" TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,2,12,2" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- ── Row color style (shared by both layouts) ─────────────────── -->
+        <!-- Shared context menu for any DataGrid row that has a Symbol property -->
+        <ContextMenu x:Key="RowContextMenu">
+            <MenuItem Header="Open in Yahoo Finance"
+                      Command="{Binding Data.OpenInBrowserCommand, Source={StaticResource VMProxy}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Symbol,
+                                         RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+        </ContextMenu>
+
+        <Style x:Key="RecRowStyle" TargetType="DataGridRow">
+            <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+            <!-- Tooltip: company name, sector, and key signal on hover -->
+            <Setter Property="ToolTip">
+                <Setter.Value>
+                    <ToolTip MaxWidth="380">
+                        <StackPanel>
+                            <TextBlock Text="{Binding CompanyName}" FontWeight="Bold" FontSize="13" />
+                            <TextBlock Text="{Binding Sector, StringFormat='Sector: {0}'}"
+                                       Foreground="#666" Margin="0,2,0,6" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="{Binding LastPrice,    StringFormat='Price:  ${0:F2}'}" />
+                                    <TextBlock Text="{Binding DayChangePctDisplay, StringFormat='Change: {0}'}" />
+                                    <TextBlock Text="{Binding RSI14,        StringFormat='RSI14:  {0:F1}'}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding MarketCapDisplay, StringFormat='Mkt Cap: {0}'}" />
+                                    <TextBlock Text="{Binding PERatio,      StringFormat='P/E:     {0:F1}'}" />
+                                    <TextBlock Text="{Binding Beta,          StringFormat='Beta:    {0:F2}'}" />
+                                </StackPanel>
+                            </Grid>
+                            <Separator Margin="0,6" />
+                            <TextBlock Text="{Binding Reasoning}" TextWrapping="Wrap" FontStyle="Italic" Foreground="#444" />
+                        </StackPanel>
+                    </ToolTip>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Action}" Value="StrongBuy">
+                    <Setter Property="Background" Value="#A5D6A7" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Action}" Value="Buy">
+                    <Setter Property="Background" Value="#E8F5E9" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Action}" Value="Sell">
+                    <Setter Property="Background" Value="#FFCDD2" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Action}" Value="StrongSell">
+                    <Setter Property="Background" Value="#EF9A9A" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- =========================================================== -->
+        <!-- Details template — shared by all three tabs                   -->
+        <!-- =========================================================== -->
+        <DataTemplate x:Key="DetailsTemplate">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="8">
+                    <TextBlock Text="{Binding Symbol, FallbackValue='(select an item)'}"
+                               FontSize="20" FontWeight="Bold" />
+                    <TextBlock Text="{Binding CompanyName, FallbackValue=''}"
+                               FontSize="14" Foreground="#444" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding Sector, StringFormat='Sector: {0}', FallbackValue=''}"
+                               Foreground="#666" FontStyle="Italic" Margin="0,2,0,0" />
+
+                    <TextBlock Text="{Binding Action, StringFormat='Action: {0}', FallbackValue=''}"
+                               Margin="0,10,0,0" />
+                    <TextBlock Text="{Binding Confidence, StringFormat='Confidence: {0:P1}', FallbackValue=''}"
+                               Margin="0,4,0,0" />
+
+                    <!-- Live price block -->
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="Live Market Data" FontWeight="SemiBold" />
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="{Binding LastPrice,          StringFormat='Price: ${0:F2}  ',     FallbackValue=''}" />
+                        <TextBlock Text="{Binding DayChangeDisplay,   StringFormat='{}Change: {0}  ',      FallbackValue=''}" />
+                        <TextBlock Text="{Binding DayChangePctDisplay,StringFormat='{}({0})  ',            FallbackValue=''}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="0,2,0,0">
+                        <TextBlock Text="{Binding VolumeDisplay,      StringFormat='Vol: {0}  ',           FallbackValue=''}" />
+                        <TextBlock Text="{Binding AvgVolumeDisplay,   StringFormat='Avg Vol: {0}  ',       FallbackValue=''}" />
+                        <TextBlock Text="{Binding MarketCapDisplay,   StringFormat='Mkt Cap: {0}  ',       FallbackValue=''}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="0,2,0,0">
+                        <TextBlock Text="{Binding PERatio,            StringFormat='P/E: {0:F1}  ',        FallbackValue=''}" />
+                        <TextBlock Text="{Binding ForwardPE,          StringFormat='Fwd P/E: {0:F1}  ',    FallbackValue=''}" />
+                        <TextBlock Text="{Binding EPS,                StringFormat='EPS: ${0:F2}  ',       FallbackValue=''}" />
+                        <TextBlock Text="{Binding PriceToBook,        StringFormat='P/B: {0:F2}  ',        FallbackValue=''}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="0,2,0,0">
+                        <TextBlock Text="{Binding Week52High,         StringFormat='52W H: ${0:F2}  ',     FallbackValue=''}" />
+                        <TextBlock Text="{Binding Week52Low,          StringFormat='52W L: ${0:F2}  ',     FallbackValue=''}" />
+                        <TextBlock Text="{Binding Beta,               StringFormat='Beta: {0:F2}  ',       FallbackValue=''}" />
+                        <TextBlock Text="{Binding DividendYieldPct,   StringFormat='Div: {0:F2}%  ',       FallbackValue=''}" />
+                        <TextBlock Text="{Binding ShortRatio,         StringFormat='Short Ratio: {0:F1}  ',FallbackValue=''}" />
+                    </WrapPanel>
+
+                    <!-- Technical indicators -->
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="Technical Indicators" FontWeight="SemiBold" />
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="{Binding RSI14,             StringFormat='RSI14: {0:F1}  ',       FallbackValue=''}" />
+                        <TextBlock Text="{Binding WeekReturnDisplay, StringFormat='{}Week Ret: {0}  ',     FallbackValue=''}" />
+                        <TextBlock Text="{Binding SMA20,             StringFormat='SMA20: ${0:F2}  ',      FallbackValue=''}" />
+                        <TextBlock Text="{Binding SMA50,             StringFormat='SMA50: ${0:F2}  ',      FallbackValue=''}" />
+                        <TextBlock Text="{Binding VolumeTrend,       StringFormat='Vol Trend: {0:F2}×  ',  FallbackValue=''}" />
+                    </WrapPanel>
+
+                    <!-- Trade dates -->
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="Trade Dates" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding BuyDate,       StringFormat='Buy:  {0:ddd, MMM d yyyy}',        FallbackValue=''}" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding SellDate,      StringFormat='Sell: {0:ddd, MMM d yyyy}',        FallbackValue=''}" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding EntryDate,     StringFormat='Entry: {0:ddd, MMM d yyyy}',       FallbackValue=''}" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding PlannedSellDate,StringFormat='Planned exit: {0:ddd, MMM d yyyy}',FallbackValue=''}" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding HoldingPeriod, StringFormat='Holding period: {0}'}"             Margin="0,4,0,0" Foreground="#666" />
+
+                    <!-- Target price -->
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="{Binding TargetPrice, StringFormat='Target price: ${0:F2}', FallbackValue=''}" />
+                    <TextBlock Text="{Binding EntryPrice,  StringFormat='Entry price: ${0:F2}',  FallbackValue=''}" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding ShareCount,  StringFormat='Shares: {0}',           FallbackValue=''}" Margin="0,2,0,0" />
+                    <TextBlock Text="{Binding GeneratedAt, StringFormat='Generated: {0:g}',      FallbackValue=''}" Margin="0,4,0,0" Foreground="#666" />
+
+                    <!-- Reasoning -->
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="Reasoning / Notes" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Reasoning, FallbackValue=''}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding Notes,     FallbackValue=''}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />  <!-- Row 0: Header + strategy    -->
+            <RowDefinition Height="Auto" />  <!-- Row 1: Market index bar     -->
+            <RowDefinition Height="*"    />  <!-- Row 2: Body                 -->
+            <RowDefinition Height="Auto" />  <!-- Row 3: Status bar           -->
+        </Grid.RowDefinitions>
+
+        <!-- =========================================================== -->
+        <!-- Row 0: Header — title, strategy selector, settings button    -->
+        <!-- =========================================================== -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8" LastChildFill="True">
+
+            <!-- Settings button (right) -->
+            <Button Content="⚙  Settings"
+                    Click="Settings_Click"
+                    Padding="10,5"
+                    DockPanel.Dock="Right"
+                    VerticalAlignment="Center"
+                    ToolTip="Open application settings" />
+
+            <!-- Strategy selector + description (fills all remaining space) -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Strategy:" Style="{StaticResource LabelStyle}" />
+
+                <ComboBox ItemsSource="{Binding Strategies}"
+                          SelectedItem="{Binding SelectedStrategy}"
+                          MinWidth="180" Margin="0,0,12,0"
+                          ToolTip="{Binding SelectedStrategy.Description}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}"
+                                       ToolTip="{Binding Description}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Full description of the active strategy (truncated; full text via tooltip) -->
+                <TextBlock Text="{Binding SelectedStrategy.Description}"
+                           ToolTip="{Binding SelectedStrategy.Description}"
+                           Foreground="#666" FontStyle="Italic"
+                           VerticalAlignment="Center"
+                           MaxWidth="700"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- =========================================================== -->
+        <!-- Row 1: Market index bar — DOW / S&P 500 / NASDAQ / Russell   -->
+        <!-- =========================================================== -->
+        <Border Grid.Row="1"
+                Background="#EEF2F7" BorderBrush="#C5CAE9"
+                BorderThickness="0,1,0,1" Padding="8,5" Margin="0,0,0,4">
+            <DockPanel LastChildFill="False">
+                <!-- Updated timestamp — docked to the right -->
+                <TextBlock DockPanel.Dock="Right"
+                           Text="{Binding MarketIndexStatus}"
+                           Foreground="#999" FontSize="10"
+                           VerticalAlignment="Center"
+                           Margin="12,0,0,0" />
+
+                <!-- Index cards — horizontal list -->
+                <ItemsControl ItemsSource="{Binding MarketIndices}"
+                              DockPanel.Dock="Left">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,20,0">
+                                <!-- Index name label -->
+                                <TextBlock Text="{Binding Name}"
+                                           FontSize="11" FontWeight="SemiBold"
+                                           Foreground="#556"
+                                           Margin="0,0,7,0"
+                                           VerticalAlignment="Center" />
+                                <!-- Current level -->
+                                <TextBlock Text="{Binding PriceDisplay}"
+                                           FontSize="12" FontWeight="Bold"
+                                           Foreground="#111"
+                                           Margin="0,0,6,0"
+                                           VerticalAlignment="Center" />
+                                <!-- Change (colored green / red) -->
+                                <TextBlock FontSize="11" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text"       Value="{Binding ChangeDisplay}" />
+                                            <Setter Property="Foreground" Value="#388E3C" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPositive}" Value="False">
+                                                    <Setter Property="Foreground" Value="#D32F2F" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+        </Border>
+
+        <!-- =========================================================== -->
+        <!-- Row 2: Body — Full (side-by-side) vs Compact (stacked)        -->
+        <!-- (Column visibility is in ⚙ Settings → Column Visibility)     -->
+        <!-- =========================================================== -->
+
+        <!-- FULL LAYOUT -->
+        <Grid Grid.Row="2"
+              Visibility="{Binding LayoutMode,
+                          Converter={StaticResource LayoutModeToVisibility},
+                          ConverterParameter=Full}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" MinWidth="320" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="3*"  MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <TabControl Grid.Column="0">
+                <!-- ===== Recommendations tab ===== -->
+                <TabItem Header="Recommendations">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Add to Watch" Command="{Binding AddToWatchCommand}"
+                                    Padding="10,4" Margin="0,0,6,0" />
+                            <Button Content="Mark as Held" Command="{Binding AddToHeldCommand}"
+                                    Padding="10,4" />
+                        </StackPanel>
+
+                        <DataGrid x:Name="FullRecsGrid"
+                                  ItemsSource="{Binding Recommendations}"
+                                  SelectedItem="{Binding SelectedRecommendation}"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  AlternatingRowBackground="#F7F7F7"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  EnableColumnVirtualization="True"
+                                  CanUserReorderColumns="True"
+                                  RowStyle="{StaticResource RecRowStyle}"
+                                  Sorting="FullRecsGrid_Sorting"
+                                  ColumnDisplayIndexChanged="FullRecsGrid_ColumnDisplayIndexChanged">
+
+                            <DataGrid.Columns>
+
+                                <!-- Symbol + Company Name (always visible) -->
+                                <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="2,1">
+                                                <TextBlock Text="{Binding Symbol}"
+                                                           FontWeight="SemiBold" FontSize="12" />
+                                                <TextBlock Text="{Binding CompanyName}"
+                                                           FontSize="9" Foreground="#666"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+
+                                <!-- Source — which data source(s) contributed to this recommendation -->
+                                <DataGridTextColumn Header="Source"
+                                    Binding="{Binding SourceDisplay}"
+                                    Width="90"
+                                    Visibility="{Binding Data.ColSource.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Action (always visible) — SortMemberPath routes header-click through
+                                     ActionSortOrder (int) so the enum sorts StrongBuy→StrongSell,
+                                     not alphabetically. -->
+                                <DataGridTextColumn Header="Action" Binding="{Binding Action}"
+                                                    SortMemberPath="ActionSortOrder" Width="88" />
+
+                                <!-- Toggleable — price & daily move -->
+                                <DataGridTextColumn Header="Price"
+                                    Binding="{Binding LastPrice, StringFormat={}{0:F2}}"
+                                    Width="68"
+                                    Visibility="{Binding Data.ColPrice.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Change $"
+                                    Binding="{Binding DayChangeDisplay}"
+                                    Width="74"
+                                    Visibility="{Binding Data.ColDayChange.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Change %"
+                                    Binding="{Binding DayChangePctDisplay}"
+                                    Width="74"
+                                    Visibility="{Binding Data.ColDayChangePct.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Technical -->
+                                <DataGridTextColumn Header="RSI14"
+                                    Binding="{Binding RSI14, StringFormat={}{0:F1}}"
+                                    Width="58"
+                                    Visibility="{Binding Data.ColRSI.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Wk Ret%"
+                                    Binding="{Binding WeekReturnDisplay}"
+                                    Width="68"
+                                    Visibility="{Binding Data.ColWeekReturn.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="SMA20"
+                                    Binding="{Binding SMA20, StringFormat={}{0:F2}}"
+                                    Width="68"
+                                    Visibility="{Binding Data.ColSMA20.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="SMA50"
+                                    Binding="{Binding SMA50, StringFormat={}{0:F2}}"
+                                    Width="68"
+                                    Visibility="{Binding Data.ColSMA50.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Vol Trend"
+                                    Binding="{Binding VolumeTrend, StringFormat={}{0:F2}}"
+                                    Width="72"
+                                    Visibility="{Binding Data.ColVolTrend.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Confidence -->
+                                <DataGridTextColumn Header="Conf."
+                                    Binding="{Binding Confidence, StringFormat={}{0:P0}}"
+                                    Width="58"
+                                    Visibility="{Binding Data.ColConf.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Trade dates -->
+                                <DataGridTextColumn Header="Buy"
+                                    Binding="{Binding BuyDate,  StringFormat={}{0:MMM d}}"
+                                    Width="60"
+                                    Visibility="{Binding Data.ColBuyDate.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Sell"
+                                    Binding="{Binding SellDate, StringFormat={}{0:MMM d}}"
+                                    Width="60"
+                                    Visibility="{Binding Data.ColSellDate.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Volume -->
+                                <DataGridTextColumn Header="Volume"
+                                    Binding="{Binding VolumeDisplay}"
+                                    Width="72"
+                                    Visibility="{Binding Data.ColVolume.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Avg Vol"
+                                    Binding="{Binding AvgVolumeDisplay}"
+                                    Width="72"
+                                    Visibility="{Binding Data.ColAvgVolume.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Valuation -->
+                                <DataGridTextColumn Header="Mkt Cap"
+                                    Binding="{Binding MarketCapDisplay}"
+                                    Width="78"
+                                    Visibility="{Binding Data.ColMarketCap.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="P/E"
+                                    Binding="{Binding PERatio, StringFormat={}{0:F1}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColPE.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Fwd P/E"
+                                    Binding="{Binding ForwardPE, StringFormat={}{0:F1}}"
+                                    Width="64"
+                                    Visibility="{Binding Data.ColForwardPE.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="EPS"
+                                    Binding="{Binding EPS, StringFormat={}{0:F2}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColEPS.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="P/B"
+                                    Binding="{Binding PriceToBook, StringFormat={}{0:F2}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColPriceToBook.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Range & risk -->
+                                <DataGridTextColumn Header="52W Hi"
+                                    Binding="{Binding Week52High, StringFormat={}{0:F2}}"
+                                    Width="68"
+                                    Visibility="{Binding Data.Col52WkHigh.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="52W Lo"
+                                    Binding="{Binding Week52Low, StringFormat={}{0:F2}}"
+                                    Width="68"
+                                    Visibility="{Binding Data.Col52WkLow.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Beta"
+                                    Binding="{Binding Beta, StringFormat={}{0:F2}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColBeta.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Div%"
+                                    Binding="{Binding DividendYieldPct, StringFormat={}{0:F2}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColDivYield.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Short"
+                                    Binding="{Binding ShortRatio, StringFormat={}{0:F1}}"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColShortRatio.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+
+                                <!-- Reasoning — star width, always last -->
+                                <DataGridTextColumn Header="Reasoning"
+                                    Binding="{Binding Reasoning}"
+                                    Width="*"
+                                    Visibility="{Binding Data.ColReasoning.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ===== Day Picks tab ===== -->
+                <!-- ===== Day Picks tab ===== -->
+                <TabItem Header="Daily Picks">
+                    <DockPanel>
+
+                        <!-- Sub-header: status only (no amber, no refresh button) -->
+                        <Border DockPanel.Dock="Top"
+                                Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="8,6">
+                            <TextBlock Text="{Binding DayPicksStatus}"
+                                       VerticalAlignment="Center"
+                                       Foreground="#555" FontStyle="Italic" />
+                        </Border>
+
+                        <!-- Action buttons -->
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Add to Watch"
+                                    Command="{Binding AddDayPickToWatchCommand}"
+                                    Padding="10,4" Margin="0,0,6,0"
+                                    ToolTip="Track this intraday pick on your Watch list" />
+                            <Button Content="Add to Positions"
+                                    Command="{Binding AddDayPickToHeldCommand}"
+                                    Padding="10,4"
+                                    ToolTip="Record this pick as an open position" />
+                        </StackPanel>
+
+                        <!-- Disclaimer -->
+                        <TextBlock DockPanel.Dock="Bottom"
+                                   Text="&#x26A0; These are algorithmic signals only &#x2014; not financial advice. Day trading carries significant risk. Always use your own judgment."
+                                   FontSize="10" Foreground="#999" Margin="6,4" TextWrapping="Wrap" />
+
+                        <!-- Picks grid -->
+                        <DataGrid ItemsSource="{Binding DayPicks}"
+                                  SelectedItem="{Binding SelectedDayPick}"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  AlternatingRowBackground="#FAFAFA"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  EnableColumnVirtualization="True">
+
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Direction}" Value="Long">
+                                            <Setter Property="Background" Value="#E8F5E9" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Direction}" Value="Short">
+                                            <Setter Property="Background" Value="#FFEBEE" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                    <Setter Property="ToolTip">
+                                        <Setter.Value>
+                                            <ToolTip MaxWidth="360">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Symbol}" FontWeight="Bold" FontSize="13" />
+                                                    <TextBlock Text="{Binding CompanyName}" Foreground="#444" Margin="0,2,0,4" />
+                                                    <Separator />
+                                                    <TextBlock Text="{Binding TriggerReason}" TextWrapping="Wrap"
+                                                               Margin="0,6,0,0" FontStyle="Italic" />
+                                                    <Separator Margin="0,6" />
+                                                    <TextBlock Text="{Binding GeneratedAt, StringFormat='Generated: {0:HH:mm}'}"
+                                                               Foreground="#888" FontSize="10" />
+                                                </StackPanel>
+                                            </ToolTip>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </DataGrid.RowStyle>
+
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="2,1">
+                                                <TextBlock Text="{Binding Symbol}" FontWeight="SemiBold" FontSize="12" />
+                                                <TextBlock Text="{Binding CompanyName}" FontSize="9" Foreground="#666"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Direction" Binding="{Binding DirectionDisplay}" Width="80" />
+                                <DataGridTextColumn Header="Score" Binding="{Binding ScoreDisplay}" Width="56" SortMemberPath="IntraDayScore" />
+                                <DataGridTextColumn Header="Price" Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="68" />
+                                <DataGridTextColumn Header="Day Chg%" Binding="{Binding DayChangePctDisplay}" Width="72" />
+                                <DataGridTextColumn Header="Vol Ratio" Binding="{Binding VolumeRatioDisplay}" Width="72" SortMemberPath="VolumeRatio" />
+                                <DataGridTextColumn Header="Gap%" Binding="{Binding GapPctDisplay}" Width="60" SortMemberPath="GapPct" />
+                                <DataGridTextColumn Header="ATR%" Binding="{Binding AtrPctDisplay}" Width="56" SortMemberPath="AtrPct" />
+                                <DataGridTextColumn Header="RSI14" Binding="{Binding RSI14, StringFormat={}{0:F1}}" Width="52" />
+                                <DataGridTextColumn Header="Entry" Binding="{Binding EntryPrice, StringFormat={}{0:F2}}" Width="64" />
+                                <DataGridTextColumn Header="Stop" Binding="{Binding StopLoss, StringFormat={}{0:F2}}" Width="64" />
+                                <DataGridTextColumn Header="Target" Binding="{Binding Target, StringFormat={}{0:F2}}" Width="64" />
+                                <DataGridTextColumn Header="R:R" Binding="{Binding RiskRewardDisplay}" Width="50" SortMemberPath="RiskRewardRatio" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ===== Watch tab ===== -->
+                <TabItem Header="{Binding WatchTabHeader}">
+                    <Grid>
+                        <!-- Empty-state overlay -->
+                        <TextBlock Text="Your watch list is empty.&#x0A;Select a recommendation and click &#x22;Add to Watch&#x22;."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextAlignment="Center" Foreground="#AAA" FontStyle="Italic"
+                                   Visibility="{Binding WatchListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+
+                        <DockPanel Visibility="{Binding WatchListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="Move to Positions"
+                                        Command="{Binding PromoteWatchToPositionCommand}"
+                                        Padding="10,4" Margin="0,0,6,0"
+                                        ToolTip="Move this stock from Watch to your open Positions" />
+                                <Button Content="Remove from Watch"
+                                        Click="RemoveFromWatch_Click"
+                                        Padding="10,4" />
+                            </StackPanel>
+                            <DataGrid ItemsSource="{Binding WatchList}"
+                                      SelectedItem="{Binding SelectedWatch}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                      AlternatingRowBackground="#F7F7F7">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                        <Setter Property="ToolTip">
+                                            <Setter.Value>
+                                                <ToolTip>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Symbol}" FontWeight="Bold" FontSize="13" />
+                                                        <TextBlock Text="{Binding CompanyName}" Foreground="#444" Margin="0,2,0,6" />
+                                                        <TextBlock Text="{Binding WatchedPrice, StringFormat='Added at: ${0:F2}'}" />
+                                                        <TextBlock Text="{Binding WatchedAt, StringFormat='Date added: {0:MMM d, yyyy  HH:mm}'}" />
+                                                        <TextBlock Text="{Binding LastPrice, StringFormat='Current price: ${0:F2}'}" Margin="0,4,0,0" />
+                                                        <TextBlock Text="{Binding WatchChangePctDisplay, StringFormat='Change since watch: {0}'}" FontWeight="SemiBold" />
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WatchIsUp}" Value="True">
+                                                <Setter Property="Background" Value="#E8F5E9" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding WatchIsUp}" Value="False">
+                                                <Setter Property="Background" Value="#FFEBEE" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="2,1">
+                                                    <TextBlock Text="{Binding Symbol}" FontWeight="SemiBold" FontSize="12" />
+                                                    <TextBlock Text="{Binding CompanyName}" FontSize="9" Foreground="#666"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Action"    Binding="{Binding Action}"               Width="88" />
+                                    <DataGridTextColumn Header="Added @"   Binding="{Binding WatchedPriceDisplay}"  Width="72" SortMemberPath="WatchedPrice" />
+                                    <DataGridTextColumn Header="Added On"  Binding="{Binding WatchedAtDisplay}"     Width="72" SortMemberPath="WatchedAt" />
+                                    <DataGridTextColumn Header="Now"       Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="68" />
+                                    <DataGridTextColumn Header="Chg Since" Binding="{Binding WatchChangePctDisplay}" Width="76" SortMemberPath="WatchChangePct" />
+                                    <DataGridTextColumn Header="Day Chg%"  Binding="{Binding DayChangePctDisplay}"  Width="72" />
+                                    <DataGridTextColumn Header="Buy"       Binding="{Binding BuyDate,  StringFormat={}{0:MMM d}}" Width="60" />
+                                    <DataGridTextColumn Header="Sell"      Binding="{Binding SellDate, StringFormat={}{0:MMM d}}" Width="60" />
+                                    <DataGridTextColumn Header="Source"    Binding="{Binding SourceTag}"  Width="88" />
+                                    <DataGridTextColumn Header="Reasoning" Binding="{Binding Reasoning}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- ===== Positions tab ===== -->
+                <TabItem Header="{Binding PositionsTabHeader}">
+                    <Grid>
+                        <!-- Empty-state overlay -->
+                        <TextBlock Text="No open positions yet.&#x0A;Use &#x22;Mark as Held&#x22; on a recommendation or &#x22;Move to Positions&#x22; from Watch."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextAlignment="Center" Foreground="#AAA" FontStyle="Italic"
+                                   Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+
+                        <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="Remove from Positions"
+                                        Click="RemoveFromPosition_Click"
+                                        Padding="10,4" />
+                            </StackPanel>
+                            <DataGrid ItemsSource="{Binding HeldList}"
+                                      SelectedItem="{Binding SelectedHeld}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                      AlternatingRowBackground="#F7F7F7">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsProfit}" Value="True">
+                                                <Setter Property="Background" Value="#E8F5E9" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsProfit}" Value="False">
+                                                <Setter Property="Background" Value="#FFEBEE" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="2,1">
+                                                    <TextBlock Text="{Binding Symbol}" FontWeight="SemiBold" FontSize="12" />
+                                                    <TextBlock Text="{Binding CompanyName}" FontSize="9" Foreground="#666"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Source"       Binding="{Binding SourceTag}"                                    Width="100" />
+                                    <DataGridTextColumn Header="Entry Date"   Binding="{Binding EntryDate, StringFormat={}{0:MMM d}}"        Width="76" />
+                                    <DataGridTextColumn Header="Target Exit"  Binding="{Binding PlannedSellDate, StringFormat={}{0:MMM d}}"  Width="76" />
+                                    <DataGridTextColumn Header="Entry $"      Binding="{Binding EntryPrice, StringFormat={}{0:C}}"           Width="76" />
+                                    <DataGridTextColumn Header="Shares"       Binding="{Binding ShareCount}"                                  Width="56" />
+                                    <DataGridTextColumn Header="Current $"    Binding="{Binding CurrentValueDisplay}"                         Width="80" />
+                                    <DataGridTextColumn Header="Gain $"       Binding="{Binding UnrealizedGainDisplay}"                      Width="76" />
+                                    <DataGridTextColumn Header="Gain %"       Binding="{Binding UnrealizedGainPctDisplay}"                   Width="68" />
+                                    <DataGridTextColumn Header="Hold"         Binding="{Binding HoldingPeriod}"                               Width="64" />
+                                    <DataGridTextColumn Header="Notes"        Binding="{Binding Notes}"                                       Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <GridSplitter Grid.Column="1" Width="4"
+                          HorizontalAlignment="Stretch"
+                          Background="#DDDDDD"
+                          ToolTip="Drag to resize" />
+
+            <GroupBox Grid.Column="2"
+                      Header="{Binding ActiveSelection.Symbol, StringFormat='Details — {0}', FallbackValue='Details'}">
+                <Grid>
+                    <!-- Empty-state hint -->
+                    <TextBlock Text="Select a stock to see details."
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="#AAA" FontStyle="Italic"
+                               Visibility="{Binding HasActiveSelection, Converter={StaticResource InverseBoolToVisibility}}" />
+                    <ContentControl Content="{Binding ActiveSelection}"
+                                    ContentTemplate="{StaticResource DetailsTemplate}"
+                                    Visibility="{Binding HasActiveSelection, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <!-- COMPACT LAYOUT -->
+        <Grid Grid.Row="2"
+              Visibility="{Binding LayoutMode,
+                          Converter={StaticResource LayoutModeToVisibility},
+                          ConverterParameter=Compact}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"    MinHeight="160" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="2*"   MinHeight="160" />
+            </Grid.RowDefinitions>
+
+            <!-- ── Top pane: tabs ── -->
+            <TabControl Grid.Row="0">
+
+                <!-- Recommendations -->
+                <TabItem Header="Recommendations">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Watch" Command="{Binding AddToWatchCommand}"
+                                    Padding="8,4" Margin="0,0,4,0" />
+                            <Button Content="Held"  Command="{Binding AddToHeldCommand}" Padding="8,4" />
+                        </StackPanel>
+                        <DataGrid ItemsSource="{Binding Recommendations}"
+                                  SelectedItem="{Binding SelectedRecommendation}"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column"
+                                  RowStyle="{StaticResource RecRowStyle}">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="Symbol" Width="80" SortMemberPath="Symbol">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="2,1">
+                                                <TextBlock Text="{Binding Symbol}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding CompanyName}" FontSize="9" Foreground="#666"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Act"     Binding="{Binding Action}"                           Width="78" SortMemberPath="ActionSortOrder" />
+                                <DataGridTextColumn Header="$"       Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="60" />
+                                <DataGridTextColumn Header="Chg%"    Binding="{Binding DayChangePctDisplay}"              Width="64" />
+                                <DataGridTextColumn Header="RSI"     Binding="{Binding RSI14, StringFormat={}{0:F1}}"     Width="50" />
+                                <DataGridTextColumn Header="Buy"     Binding="{Binding BuyDate,  StringFormat={}{0:MMM d}}" Width="56" />
+                                <DataGridTextColumn Header="Sell"    Binding="{Binding SellDate, StringFormat={}{0:MMM d}}" Width="56" />
+                                <DataGridTextColumn Header="Conf."   Binding="{Binding Confidence, StringFormat={}{0:P0}}" Width="52" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- Daily Picks -->
+                <TabItem Header="Daily Picks">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="8,6">
+                            <TextBlock Text="{Binding DayPicksStatus}"
+                                       VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" />
+                        </Border>
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Watch"     Command="{Binding AddDayPickToWatchCommand}" Padding="8,4" Margin="0,0,4,0" />
+                            <Button Content="Position"  Command="{Binding AddDayPickToHeldCommand}"  Padding="8,4" />
+                        </StackPanel>
+                        <DataGrid ItemsSource="{Binding DayPicks}"
+                                  SelectedItem="{Binding SelectedDayPick}"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  AlternatingRowBackground="#FAFAFA">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Direction}" Value="Long">
+                                            <Setter Property="Background" Value="#E8F5E9" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Direction}" Value="Short">
+                                            <Setter Property="Background" Value="#FFEBEE" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}"              Width="64" />
+                                <DataGridTextColumn Header="Dir"    Binding="{Binding DirectionDisplay}"    Width="50" />
+                                <DataGridTextColumn Header="Score"  Binding="{Binding ScoreDisplay}"        Width="50" SortMemberPath="IntraDayScore" />
+                                <DataGridTextColumn Header="$"      Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="60" />
+                                <DataGridTextColumn Header="Chg%"   Binding="{Binding DayChangePctDisplay}" Width="60" />
+                                <DataGridTextColumn Header="R:R"    Binding="{Binding RiskRewardDisplay}"   Width="48" SortMemberPath="RiskRewardRatio" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}"      Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- Watch -->
+                <TabItem Header="{Binding WatchTabHeader}">
+                    <Grid>
+                        <TextBlock Text="Your watch list is empty."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#AAA" FontStyle="Italic"
+                                   Visibility="{Binding WatchListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        <DockPanel Visibility="{Binding WatchListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="Move to Positions"
+                                        Command="{Binding PromoteWatchToPositionCommand}"
+                                        Padding="8,4" Margin="0,0,4,0" />
+                                <Button Content="Remove"
+                                        Click="RemoveFromWatch_Click"
+                                        Padding="8,4" />
+                            </StackPanel>
+                            <DataGrid ItemsSource="{Binding WatchList}"
+                                      SelectedItem="{Binding SelectedWatch}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                      AlternatingRowBackground="#F7F7F7">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WatchIsUp}" Value="True">
+                                                <Setter Property="Background" Value="#E8F5E9" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding WatchIsUp}" Value="False">
+                                                <Setter Property="Background" Value="#FFEBEE" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Symbol"    Binding="{Binding Symbol}"               Width="64" />
+                                    <DataGridTextColumn Header="Added @"   Binding="{Binding WatchedPriceDisplay}"  Width="68" SortMemberPath="WatchedPrice" />
+                                    <DataGridTextColumn Header="Now"       Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="60" />
+                                    <DataGridTextColumn Header="Chg"       Binding="{Binding WatchChangePctDisplay}" Width="68" SortMemberPath="WatchChangePct" />
+                                    <DataGridTextColumn Header="Day%"      Binding="{Binding DayChangePctDisplay}"  Width="60" />
+                                    <DataGridTextColumn Header="Action"    Binding="{Binding Action}"               Width="80" />
+                                    <DataGridTextColumn Header="Source"    Binding="{Binding SourceTag}"              Width="88" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- Positions -->
+                <TabItem Header="{Binding PositionsTabHeader}">
+                    <Grid>
+                        <TextBlock Text="No open positions yet."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#AAA" FontStyle="Italic"
+                                   Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="Remove"
+                                        Click="RemoveFromPosition_Click"
+                                        Padding="8,4" />
+                            </StackPanel>
+                            <DataGrid ItemsSource="{Binding HeldList}"
+                                      SelectedItem="{Binding SelectedHeld}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                      AlternatingRowBackground="#F7F7F7">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsProfit}" Value="True">
+                                                <Setter Property="Background" Value="#E8F5E9" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsProfit}" Value="False">
+                                                <Setter Property="Background" Value="#FFEBEE" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Symbol"  Binding="{Binding Symbol}"                         Width="64" />
+                                    <DataGridTextColumn Header="Source"  Binding="{Binding SourceTag}"                           Width="80" />
+                                    <DataGridTextColumn Header="Entry"   Binding="{Binding EntryDate, StringFormat={}{0:MMM d}}" Width="56" />
+                                    <DataGridTextColumn Header="Exit"    Binding="{Binding PlannedSellDate, StringFormat={}{0:MMM d}}" Width="56" />
+                                    <DataGridTextColumn Header="Entry $" Binding="{Binding EntryPrice, StringFormat={}{0:C}}" Width="68" />
+                                    <DataGridTextColumn Header="Gain $"  Binding="{Binding UnrealizedGainDisplay}"           Width="68" />
+                                    <DataGridTextColumn Header="Gain %"  Binding="{Binding UnrealizedGainPctDisplay}"        Width="60" />
+                                    <DataGridTextColumn Header="Notes"   Binding="{Binding Notes}"                           Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <!-- Compact GridSplitter -->
+            <GridSplitter Grid.Row="1" Height="4"
+                          HorizontalAlignment="Stretch"
+                          Background="#DDDDDD"
+                          ToolTip="Drag to resize" />
+
+            <!-- Compact Details pane -->
+            <GroupBox Grid.Row="2"
+                      Header="{Binding ActiveSelection.Symbol, StringFormat='Details — {0}', FallbackValue='Details'}">
+                <Grid>
+                    <TextBlock Text="Select a stock to see details."
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="#AAA" FontStyle="Italic"
+                               Visibility="{Binding HasActiveSelection, Converter={StaticResource InverseBoolToVisibility}}" />
+                    <ContentControl Content="{Binding ActiveSelection}"
+                                    ContentTemplate="{StaticResource DetailsTemplate}"
+                                    Visibility="{Binding HasActiveSelection, Converter={StaticResource BoolToVisibility}}" />
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <!-- =========================================================== -->
+        <!-- Row 3: Status bar                                             -->
+        <!-- =========================================================== -->
+        <Border Grid.Row="3" Background="#F0F0F0" BorderBrush="#CCC"
+                BorderThickness="0,1,0,0" Padding="6,3" Margin="0,4,0,0">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Right"
+                           Text="{Binding LastScanTimeDisplay}"
+                           Foreground="#888" FontSize="10"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+                <TextBlock Text="{Binding StatusMessage}"
+                           Foreground="#444" FontSize="11"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+    </Grid>
+</Window>

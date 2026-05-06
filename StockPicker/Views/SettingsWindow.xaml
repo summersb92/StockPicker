@@ -1,0 +1,194 @@
+<Window x:Class="StockPicker.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:StockPicker.Converters"
+        Title="Settings"
+        Width="540" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:IndexUniverseConverter x:Key="IndexDisplayConverter" />
+        <Style x:Key="SettingsLabel" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="SettingsNote" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#888" />
+            <Setter Property="FontStyle" Value="Italic" />
+            <Setter Property="Margin" Value="0,2,0,12" />
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="20">
+
+        <!-- Auto-save notice -->
+        <TextBlock Text="All changes are saved automatically."
+                   FontSize="11" Foreground="#888" FontStyle="Italic"
+                   Margin="0,0,0,14" />
+
+        <!-- ── Data Sources ─────────────────────────────────────── -->
+        <TextBlock Text="Data Sources" FontSize="13" FontWeight="Bold" Margin="0,0,0,10" />
+        <ItemsControl ItemsSource="{Binding DataSources}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Margin="0,0,0,8" Padding="8" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4">
+                        <StackPanel>
+                            <CheckBox IsChecked="{Binding IsEnabled}" FontWeight="SemiBold">
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                            </CheckBox>
+                            <TextBlock Text="{Binding FreeInfo}"
+                                       FontSize="11" Foreground="#888" FontStyle="Italic"
+                                       Margin="20,2,0,4" />
+                            <StackPanel Orientation="Horizontal" Margin="20,0,0,0"
+                                        Visibility="{Binding RequiresApiKey, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="API Key:" VerticalAlignment="Center"
+                                           Margin="0,0,6,0" FontSize="12" />
+                                <TextBox Text="{Binding ApiKey, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="300" FontSize="12" VerticalContentAlignment="Center"
+                                         ToolTip="{Binding ApiKeyUrl, StringFormat='Get a key at: {0}'}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <TextBlock Text="Yahoo Finance requires no key. For others, enter your API key above — it is saved automatically."
+                   Style="{StaticResource SettingsNote}" />
+        <Separator Margin="0,4,0,12" />
+
+        <!-- ── Stock Universe / Index ────────────────────────────── -->
+        <TextBlock Text="Data &amp; Scanning" FontSize="13" FontWeight="Bold" Margin="0,0,0,10" />
+
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Stock index:" Style="{StaticResource SettingsLabel}" />
+            <ComboBox  Grid.Column="1"
+                       ItemsSource="{Binding IndexOptions}"
+                       SelectedItem="{Binding SelectedIndex}"
+                       ToolTip="Which index to scan. Dow30/S&amp;P100/NASDAQ100 use built-in lists; S&amp;P 500 is fetched live.">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Converter={StaticResource IndexDisplayConverter}}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+        </Grid>
+        <TextBlock Text="{Binding SelectedIndexDescription}" Style="{StaticResource SettingsNote}" />
+
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Scan limit:" Style="{StaticResource SettingsLabel}" />
+            <ComboBox  Grid.Column="1"
+                       ItemsSource="{Binding UniverseSizeOptions}"
+                       SelectedItem="{Binding UniverseSize}"
+                       ToolTip="Maximum stocks to scan from the selected index. Capped at the index's natural size." />
+        </Grid>
+        <TextBlock Text="Takes effect on the next scan / refresh." Style="{StaticResource SettingsNote}" />
+
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Auto-refresh interval:" Style="{StaticResource SettingsLabel}" />
+            <ComboBox  Grid.Column="1"
+                       ItemsSource="{Binding RefreshIntervalOptions}"
+                       SelectedItem="{Binding RefreshIntervalMinutes}"
+                       ToolTip="How often to re-fetch data during market hours." />
+            <TextBlock Grid.Column="2" Text=" min" VerticalAlignment="Center" Margin="6,0,0,0" />
+        </Grid>
+        <TextBlock Text="Only fires when the market is open (9:30–16:00 ET, Mon–Fri)." Style="{StaticResource SettingsNote}" />
+
+        <Separator Margin="0,4,0,12" />
+
+        <!-- ── Analysis ──────────────────────────────────────────── -->
+        <TextBlock Text="Analysis" FontSize="13" FontWeight="Bold" Margin="0,0,0,10" />
+
+        <!-- Weekly profit spinner -->
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Target profit / week:" Style="{StaticResource SettingsLabel}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="▼" Width="26" Height="24" Padding="0"
+                        Command="{Binding DecrementWeeklyCommand}"
+                        ToolTip="Decrease weekly target by 0.10%" />
+                <TextBox Width="60" TextAlignment="Center" Height="24" VerticalContentAlignment="Center"
+                         Text="{Binding TargetProfitMarginPercent, UpdateSourceTrigger=LostFocus, StringFormat=F2}"
+                         ToolTip="Minimum weekly return % to classify a pick as a Buy."
+                         Margin="4,0" />
+                <Button Content="▲" Width="26" Height="24" Padding="0"
+                        Command="{Binding IncrementWeeklyCommand}"
+                        ToolTip="Increase weekly target by 0.10%" />
+                <TextBlock Text=" %" VerticalAlignment="Center" Margin="6,0,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Monthly profit spinner (compound from weekly) -->
+        <Grid Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Target profit / month:" Style="{StaticResource SettingsLabel}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="▼" Width="26" Height="24" Padding="0"
+                        Command="{Binding DecrementMonthlyCommand}"
+                        ToolTip="Decrease monthly target by 0.10%" />
+                <TextBox Width="60" TextAlignment="Center" Height="24" VerticalContentAlignment="Center"
+                         Text="{Binding TargetMonthlyProfitPercent, UpdateSourceTrigger=LostFocus, StringFormat=F2}"
+                         ToolTip="Equivalent monthly return % (compound of weekly). Changing this updates the weekly figure."
+                         Margin="4,0" />
+                <Button Content="▲" Width="26" Height="24" Padding="0"
+                        Command="{Binding IncrementMonthlyCommand}"
+                        ToolTip="Increase monthly target by 0.10%" />
+                <TextBlock Text=" %" VerticalAlignment="Center" Margin="6,0,0,0" />
+            </StackPanel>
+        </Grid>
+        <TextBlock Text="Weekly and monthly targets stay in sync via compound interest. Recommendations update instantly." Style="{StaticResource SettingsNote}" />
+
+        <Separator Margin="0,4,0,12" />
+
+        <!-- ── Column Visibility ─────────────────────────────────── -->
+        <Separator Margin="0,4,0,12" />
+        <TextBlock Text="Column Visibility" FontSize="13" FontWeight="Bold" Margin="0,0,0,10" />
+        <TextBlock Text="Toggle which columns appear in the Recommendations grid."
+                   Style="{StaticResource SettingsNote}" />
+        <ItemsControl ItemsSource="{Binding AllColumns}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <CheckBox Content="{Binding Header}"
+                              IsChecked="{Binding IsVisible}"
+                              Margin="0,2,18,2" VerticalAlignment="Center" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- ── Close ─────────────────────────────────────────────── -->
+        <Separator Margin="0,12,0,12" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
+            <Button Content="Close" Click="Close_Click"
+                    Padding="20,6" IsDefault="True" IsCancel="True" />
+        </StackPanel>
+
+    </StackPanel>
+</Window>

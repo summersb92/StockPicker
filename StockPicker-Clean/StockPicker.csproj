@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>StockPicker</RootNamespace>
+    <AssemblyName>StockPicker</AssemblyName>
+    <LangVersion>latest</LangVersion>
+
+    <!-- ── Single-file self-contained publish ──────────────────────────
+         Run: dotnet publish -c Release -r win-x64
+         Output: bin\Release\net8.0-windows\win-x64\publish\StockPicker.exe
+         The exe includes the .NET runtime — no install required on target PC.
+    ──────────────────────────────────────────────────────────────────── -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+    <!-- Trim unused framework code to keep the exe smaller (~50–80 MB → ~30–40 MB).
+         WPF apps need TrimmerRootDescriptor or partial trimming; "partial" is safest. -->
+    <PublishTrimmed>false</PublishTrimmed>
+
+  </PropertyGroup>
+
+</Project>
