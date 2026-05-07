@@ -33,8 +33,8 @@ namespace StockPicker.Services
     public class DayPickService : IDayPickService
     {
         private const int    MaxPicks      = 10;
-        private const int    MinPicks      = 5;
-        private const double MinScore      = 2.5;   // floor — below this = not worth flagging
+        private const int    MinPicks      = 5;     // always return at least this many (top-ranked fallback)
+        private const double MinScore      = 1.5;   // floor — below this = not worth flagging
         private const double AtrMultStop   = 1.5;   // stop = 1.5× ATR from entry
         private const double AtrMultTarget = 2.5;   // target = 2.5× ATR from entry
 
@@ -85,6 +85,42 @@ namespace StockPicker.Services
                 .Take(MaxPicks)
                 .ToList();
 
+            // Fallback: if the threshold filtered everything out, promote the top-ranked
+            // scorers so the user always sees something rather than a blank list.
+            if (sorted.Count < MinPicks)
+            {
+                // Score every stock that was skipped (score < MinScore OR had < 15 bars) —
+                // re-score the full universe with no floor and take the best ones.
+                var fallback = new List<DayPick>(universe.Count);
+                foreach (var stock in universe)
+                {
+                    if (sorted.Any(p => p.Symbol.Equals(stock.Symbol, StringComparison.OrdinalIgnoreCase)))
+                        continue; // already in list
+
+                    history.TryGetValue(stock.Symbol, out var bars);
+                    summaries.TryGetValue(stock.Symbol, out var quote);
+                    if (bars == null || bars.Count < 2 || quote == null) continue;
+
+                    var pick = ScoreStock(stock, bars, quote, minScoreOverride: 0);
+                    if (pick == null) continue;
+
+                    if (nameLookup != null && nameLookup.TryGetValue(stock.Symbol, out var info))
+                    { pick.CompanyName = info.Name; pick.Sector = info.Sector; }
+                    else
+                    { pick.CompanyName = stock.Name; pick.Sector = stock.Sector; }
+
+                    if (!string.IsNullOrWhiteSpace(quote.LongName))
+                        pick.CompanyName = quote.LongName;
+
+                    fallback.Add(pick);
+                }
+
+                var needed = MinPicks - sorted.Count;
+                sorted.AddRange(
+                    fallback.OrderByDescending(p => p.IntraDayScore).Take(needed));
+                sorted = sorted.OrderByDescending(p => p.IntraDayScore).ToList();
+            }
+
             return Task.FromResult<IReadOnlyList<DayPick>>(sorted);
         }
 
@@ -97,7 +133,8 @@ namespace StockPicker.Services
         private static DayPick? ScoreStock(
             Stock stock,
             IReadOnlyList<StockQuote> bars,
-            QuoteSummary quote)
+            QuoteSummary quote,
+            double minScoreOverride = MinScore)
         {
             double[] closes  = bars.Select(b => (double)b.Close).ToArray();
             double[] highs   = bars.Select(b => (double)b.High).ToArray();
@@ -196,7 +233,7 @@ namespace StockPicker.Services
             }
 
             // ── Filter ────────────────────────────────────────────────────────
-            if (score < MinScore) return null;
+            if (score < minScoreOverride) return null;
 
             // ── Direction ─────────────────────────────────────────────────────
             // Primary cue: today's price change direction

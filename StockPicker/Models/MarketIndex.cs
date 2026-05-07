@@ -1,10 +1,14 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+
 namespace StockPicker.Models
 {
     /// <summary>
     /// Represents a live snapshot of a broad market index (e.g. DOW, S&amp;P 500, NASDAQ).
-    /// Bound to the market index bar at the top of the main window.
+    /// Implements <see cref="INotifyPropertyChanged"/> so WPF bindings update in-place
+    /// without needing to replace the item in the collection.
     /// </summary>
-    public class MarketIndex
+    public class MarketIndex : INotifyPropertyChanged
     {
         /// <summary>Yahoo Finance symbol, e.g. "^DJI".</summary>
         public string Symbol { get; set; } = "";
@@ -12,9 +16,35 @@ namespace StockPicker.Models
         /// <summary>Display name shown in the UI, e.g. "DOW".</summary>
         public string Name { get; set; } = "";
 
-        public decimal? Price       { get; set; }
-        public decimal? DayChange   { get; set; }
-        public double?  DayChangePct { get; set; }
+        private decimal? _price;
+        public decimal? Price
+        {
+            get => _price;
+            set { if (_price != value) { _price = value; OnPropertyChanged(); OnPropertyChanged(nameof(PriceDisplay)); } }
+        }
+
+        private decimal? _dayChange;
+        public decimal? DayChange
+        {
+            get => _dayChange;
+            set { if (_dayChange != value) { _dayChange = value; OnPropertyChanged(); OnPropertyChanged(nameof(ChangeDisplay)); } }
+        }
+
+        private double? _dayChangePct;
+        public double? DayChangePct
+        {
+            get => _dayChangePct;
+            set
+            {
+                if (_dayChangePct != value)
+                {
+                    _dayChangePct = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(IsPositive));
+                    OnPropertyChanged(nameof(ChangeDisplay));
+                }
+            }
+        }
 
         /// <summary>True when the index is flat or positive on the day.</summary>
         public bool IsPositive => DayChangePct.HasValue && DayChangePct.Value >= 0;
@@ -44,5 +74,9 @@ namespace StockPicker.Models
                 return $"{arrow} {pts} ({pct})";
             }
         }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? name = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 }

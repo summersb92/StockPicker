@@ -273,5 +273,13 @@ namespace StockPicker.Services
                 return v;
             return null;
         }
+        /// <inheritdoc />
+        public Task<IReadOnlyList<WeeklyBar>> GetWeeklyBarsAsync(string symbol, ChartRange range = ChartRange.Year, System.Threading.CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<WeeklyBar>>(Array.Empty<WeeklyBar>());
+
+        /// <inheritdoc />
+        public Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(string symbol, System.Threading.CancellationToken ct = default)
+            => Task.FromResult<(double? IV, double? Theta)>((null, null));
+
     }
 }

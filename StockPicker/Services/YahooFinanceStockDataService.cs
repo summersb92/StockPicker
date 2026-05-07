@@ -199,12 +199,14 @@ namespace StockPicker.Services
             IEnumerable<string> symbols)
         {
             var result = new Dictionary<string, QuoteSummary>(StringComparer.OrdinalIgnoreCase);
-            var symbolList = string.Join(",", symbols);
+            // Encode each symbol individually so ^ becomes %5E, but keep commas as literal
+            // separators — Yahoo rejects %2C between symbols and returns no results.
+            var symbolList = string.Join(",", symbols.Select(Uri.EscapeDataString));
             if (string.IsNullOrWhiteSpace(symbolList)) return result;
 
             var crumb = await EnsureCrumbAsync();
             var url = $"https://query2.finance.yahoo.com/v7/finance/quote" +
-                      $"?symbols={Uri.EscapeDataString(symbolList)}" +
+                      $"?symbols={symbolList}" +
                       (crumb != null ? $"&crumb={Uri.EscapeDataString(crumb)}" : "");
 
             try
@@ -254,6 +256,10 @@ namespace StockPicker.Services
                     // 52-week change is also a fraction
                     var raw52Chg = GetDouble(item, "52WeekChange");
                     q.Week52ChangePct = raw52Chg.HasValue ? raw52Chg * 100.0 : null;
+
+                    // Options Greeks — Yahoo v7 quote includes impliedVolatility on some symbols
+                    q.ImpliedVolatility = GetDouble(item, "impliedVolatility");
+                    // Theta requires the options chain endpoint; not available from basic quote — left null
 
                     result[sym] = q;
                 }
@@ -399,5 +405,188 @@ namespace StockPicker.Services
 
         private static long ToUnixSeconds(DateTime date) =>
             new DateTimeOffset(date).ToUnixTimeSeconds();
+        // ── Weekly chart bars ──────────────────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<WeeklyBar>> GetWeeklyBarsAsync(string symbol, ChartRange range = ChartRange.Year, System.Threading.CancellationToken ct = default)
+        {
+            try
+            {
+                // Yahoo Finance chart API
+                string interval   = range == ChartRange.Week ? "1d"  : "1wk";
+                string rangeParam = range == ChartRange.Week ? "5d"  : "1y";
+
+                string url = $"https://query1.finance.yahoo.com/v8/finance/chart/{Uri.EscapeDataString(symbol)}"
+                           + $"?interval={interval}&range={rangeParam}";
+
+                using var response = await _http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) return Array.Empty<WeeklyBar>();
+
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("chart", out var chart)) return Array.Empty<WeeklyBar>();
+                if (!chart.TryGetProperty("result", out var results)) return Array.Empty<WeeklyBar>();
+                if (results.ValueKind != JsonValueKind.Array || results.GetArrayLength() == 0)
+                    return Array.Empty<WeeklyBar>();
+
+                var result = results[0];
+
+                // Timestamps
+                if (!result.TryGetProperty("timestamp", out var tsArr)) return Array.Empty<WeeklyBar>();
+
+                // OHLCV lives inside indicators.quote[0]
+                if (!result.TryGetProperty("indicators", out var indicators)) return Array.Empty<WeeklyBar>();
+                if (!indicators.TryGetProperty("quote", out var quoteArr)) return Array.Empty<WeeklyBar>();
+                if (quoteArr.ValueKind != JsonValueKind.Array || quoteArr.GetArrayLength() == 0)
+                    return Array.Empty<WeeklyBar>();
+                var q = quoteArr[0];
+
+                var opens   = q.TryGetProperty("open",   out var o) ? o : default;
+                var highs   = q.TryGetProperty("high",   out var h) ? h : default;
+                var lows    = q.TryGetProperty("low",    out var l) ? l : default;
+                var closes  = q.TryGetProperty("close",  out var c) ? c : default;
+                var volumes = q.TryGetProperty("volume", out var v) ? v : default;
+
+                var bars = new List<WeeklyBar>();
+                int count = tsArr.GetArrayLength();
+                for (int i = 0; i < count; i++)
+                {
+                    // Skip bars where close is null (can happen on partial weeks)
+                    if (closes.ValueKind == JsonValueKind.Array)
+                    {
+                        var closeEl = closes[i];
+                        if (closeEl.ValueKind == JsonValueKind.Null) continue;
+
+                        var ts = DateTimeOffset.FromUnixTimeSeconds(tsArr[i].GetInt64()).UtcDateTime;
+                        bars.Add(new WeeklyBar
+                        {
+                            WeekStart = ts,
+                            Open      = opens.ValueKind  == JsonValueKind.Array && opens[i].ValueKind  != JsonValueKind.Null ? (decimal)opens[i].GetDouble()  : closeEl.GetDecimal(),
+                            High      = highs.ValueKind  == JsonValueKind.Array && highs[i].ValueKind  != JsonValueKind.Null ? (decimal)highs[i].GetDouble()  : closeEl.GetDecimal(),
+                            Low       = lows.ValueKind   == JsonValueKind.Array && lows[i].ValueKind   != JsonValueKind.Null ? (decimal)lows[i].GetDouble()   : closeEl.GetDecimal(),
+                            Close     = (decimal)closeEl.GetDouble(),
+                            Volume    = volumes.ValueKind == JsonValueKind.Array && volumes[i].ValueKind != JsonValueKind.Null ? volumes[i].GetInt64() : 0,
+                        });
+                    }
+                }
+                return bars;
+            }
+            catch (System.OperationCanceledException)
+            {
+                throw; // let caller handle cancellation silently
+            }
+            catch
+            {
+                return Array.Empty<WeeklyBar>();
+            }
+        }
+
+        // ── Options data (IV + Black-Scholes Theta) ────────────────────────────
+
+        /// <summary>
+        /// Fetches the near-term ATM implied volatility from Yahoo's options endpoint
+        /// and derives Theta via Black-Scholes.
+        /// Returns (null, null) if options data is unavailable.
+        /// </summary>
+        public async Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(
+            string symbol, System.Threading.CancellationToken ct = default)
+        {
+            try
+            {
+                string url = $"https://query1.finance.yahoo.com/v7/finance/options/{Uri.EscapeDataString(symbol)}";
+                using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return (null, null);
+
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                var result = doc.RootElement
+                    .GetProperty("optionChain")
+                    .GetProperty("result")[0];
+
+                // Underlying price
+                double stockPrice = 0;
+                if (result.TryGetProperty("quote", out var quote) &&
+                    quote.TryGetProperty("regularMarketPrice", out var priceEl))
+                    stockPrice = priceEl.GetDouble();
+
+                // Nearest expiration's option contracts
+                var optArr = result.GetProperty("options");
+                if (optArr.GetArrayLength() == 0) return (null, null);
+                var opts = optArr[0];
+
+                // Expiration date → time to expiry in years
+                double T = 0;
+                if (result.TryGetProperty("expirationDates", out var expArr) && expArr.GetArrayLength() > 0)
+                {
+                    var expUnix = expArr[0].GetInt64();
+                    var expDate = DateTimeOffset.FromUnixTimeSeconds(expUnix).UtcDateTime;
+                    T = (expDate - DateTime.UtcNow).TotalDays / 365.0;
+                }
+                if (T <= 0) T = 7.0 / 365.0; // fallback: 1 week
+
+                // Find ATM call (strike closest to stock price)
+                double bestIV = double.NaN;
+                double bestStrike = 0;
+                double bestDist = double.MaxValue;
+
+                if (opts.TryGetProperty("calls", out var calls))
+                {
+                    foreach (var call in calls.EnumerateArray())
+                    {
+                        if (!call.TryGetProperty("strike",            out var stEl)) continue;
+                        if (!call.TryGetProperty("impliedVolatility", out var ivEl)) continue;
+                        if (ivEl.ValueKind == JsonValueKind.Null) continue;
+
+                        double strike = stEl.GetDouble();
+                        double dist   = Math.Abs(strike - stockPrice);
+                        if (dist < bestDist)
+                        {
+                            bestDist   = dist;
+                            bestStrike = strike;
+                            bestIV     = ivEl.GetDouble();
+                        }
+                    }
+                }
+
+                if (double.IsNaN(bestIV) || stockPrice <= 0) return (null, null);
+
+                const double r = 0.053; // approximate risk-free rate
+                double theta = BlackScholesTheta(stockPrice, bestStrike, T, r, bestIV);
+
+                return (bestIV, theta);
+            }
+            catch (System.OperationCanceledException) { throw; }
+            catch { return (null, null); }
+        }
+
+        // ── Black-Scholes helpers ──────────────────────────────────────────────
+
+        /// <summary>Theta of a call option ($/day) using Black-Scholes.</summary>
+        private static double BlackScholesTheta(double S, double K, double T, double r, double sigma)
+        {
+            if (T <= 0 || sigma <= 0 || S <= 0 || K <= 0) return 0;
+            double d1 = (Math.Log(S / K) + (r + sigma * sigma / 2.0) * T) / (sigma * Math.Sqrt(T));
+            double d2 = d1 - sigma * Math.Sqrt(T);
+            double theta = -(S * NormalPdf(d1) * sigma / (2.0 * Math.Sqrt(T)))
+                           - r * K * Math.Exp(-r * T) * NormalCdf(d2);
+            return theta / 365.0; // convert from per-year to per-day
+        }
+
+        private static double NormalPdf(double x)
+            => Math.Exp(-0.5 * x * x) / Math.Sqrt(2.0 * Math.PI);
+
+        private static double NormalCdf(double x)
+        {
+            // Abramowitz & Stegun rational approximation — max error 7.5e-8
+            const double a1 =  0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+            const double a4 = -1.453152027, a5 =  1.061405429, p  = 0.3275911;
+            double sign = x < 0 ? -1.0 : 1.0;
+            x = Math.Abs(x) / Math.Sqrt(2.0);
+            double t = 1.0 / (1.0 + p * x);
+            double poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))));
+            double erf  = 1.0 - poly * Math.Exp(-x * x);
+            return 0.5 * (1.0 + sign * erf);
+        }
+
     }
 }

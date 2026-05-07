@@ -34,5 +34,17 @@ namespace StockPicker.Services
         /// Missing or errored symbols are silently omitted.
         /// </summary>
         Task<Dictionary<string, QuoteSummary>> GetQuoteSummariesAsync(IEnumerable<string> symbols);
+
+        /// <summary>
+        /// Fetch weekly OHLCV bars for a symbol for the past <paramref name="weeks"/> weeks.
+        /// Returns an empty list if data is unavailable.
+        /// </summary>
+        Task<IReadOnlyList<WeeklyBar>> GetWeeklyBarsAsync(string symbol, ChartRange range = ChartRange.Year, System.Threading.CancellationToken ct = default);
+
+        /// <summary>
+        /// Fetches implied volatility and Black-Scholes theta for the near-term ATM option.
+        /// Returns (null, null) if options data is unavailable or not supported.
+        /// </summary>
+        Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(string symbol, System.Threading.CancellationToken ct = default);
     }
 }

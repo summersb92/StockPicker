@@ -44,14 +44,20 @@ namespace StockPicker.Services
 
         private readonly List<Recommendation> _watch;
         private readonly List<HeldPosition>   _held;
+        private string        _dailyPicksDate  = string.Empty;
+        private List<DayPick> _dailyPicks      = new();
+        private List<MarketIndexSnapshot> _marketIndexCache = new();
 
         // ── Construction ─────────────────────────────────────────────────────
 
         public PortfolioService()
         {
-            var data = LoadFromDisk();
-            _watch   = data.WatchList;
-            _held    = data.Held;
+            var data         = LoadFromDisk();
+            _watch           = data.WatchList;
+            _held            = data.Held;
+            _dailyPicksDate  = data.DailyPicksDate  ?? string.Empty;
+            _dailyPicks      = data.DailyPicks      ?? new List<DayPick>();
+            _marketIndexCache = data.MarketIndexCache ?? new List<MarketIndexSnapshot>();
         }
 
         // ── IPortfolioService — Watch ─────────────────────────────────────────
@@ -130,11 +136,56 @@ namespace StockPicker.Services
             }
         }
 
+        // ── IPortfolioService — Market index cache ───────────────────────────────
+
+        public IReadOnlyList<MarketIndexSnapshot> GetCachedMarketIndices()
+            => _marketIndexCache.ToList();
+
+        public void SaveMarketIndicesCache(IReadOnlyList<MarketIndexSnapshot> snapshots)
+        {
+            _marketIndexCache = snapshots.ToList();
+            SaveAsync();
+        }
+
+        // ── IPortfolioService — Daily picks cache ────────────────────────────────
+
+        public IReadOnlyList<DayPick>? GetCachedDayPicks(DateTime targetDate)
+        {
+            var key = targetDate.ToString("yyyy-MM-dd");
+            return key == _dailyPicksDate && _dailyPicks.Count > 0
+                ? _dailyPicks.ToList()
+                : null;
+        }
+
+        public void SaveDayPicksCache(DateTime targetDate, IReadOnlyList<DayPick> picks)
+        {
+            _dailyPicksDate = targetDate.ToString("yyyy-MM-dd");
+            _dailyPicks     = picks.ToList();
+            SaveAsync();
+        }
+
         /// <summary>
-        /// Fire-and-forget save. Writes to a .tmp file and renames atomically
-        /// so a crash during the write never leaves a corrupt portfolio file.
+        /// Schedules a debounced save: cancels any pending write and schedules a fresh
+        /// one 250 ms from now.  Rapid successive mutations (e.g. batch multi-select adds)
+        /// all coalesce into a single file write that fires after the last mutation.
         /// </summary>
-        private void SaveAsync() => _ = SaveInternalAsync();
+        private CancellationTokenSource _saveCts = new();
+
+        private void SaveAsync()
+        {
+            // Cancel the previously scheduled save (if any) and start a new countdown.
+            _saveCts.Cancel();
+            _saveCts = new CancellationTokenSource();
+            var token = _saveCts.Token;
+
+            _ = Task.Delay(250, token)
+                    .ContinueWith(
+                        _ => SaveInternalAsync(),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnRanToCompletion,
+                        TaskScheduler.Default)
+                    .Unwrap();
+        }
 
         private async Task SaveInternalAsync()
         {
@@ -146,8 +197,11 @@ namespace StockPicker.Services
                 // even if a mutation arrives while we're serialising.
                 var snapshot = new PortfolioData
                 {
-                    WatchList = _watch.ToList(),
-                    Held      = _held.ToList(),
+                    WatchList        = _watch.ToList(),
+                    Held             = _held.ToList(),
+                    DailyPicksDate   = _dailyPicksDate,
+                    DailyPicks       = _dailyPicks.ToList(),
+                    MarketIndexCache = _marketIndexCache.ToList(),
                 };
 
                 var tmp = _file + ".tmp";

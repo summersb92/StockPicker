@@ -46,5 +46,11 @@ namespace StockPicker.Models
         public double?  Beta              { get; set; }   // beta
         public double?  DividendYieldPct  { get; set; }   // trailingAnnualDividendYield ×100
         public double?  ShortRatio        { get; set; }   // shortRatio
+
+        // ── Options Greeks ────────────────────────────────────────────────────
+        /// <summary>Implied volatility of the at-the-money option (fraction, e.g. 0.30 = 30%).</summary>
+        public double?  ImpliedVolatility  { get; set; }
+        /// <summary>Theta (time decay per day, in dollars) of the near-term ATM option.</summary>
+        public double?  Theta              { get; set; }
     }
 }

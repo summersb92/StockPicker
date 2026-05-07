@@ -41,5 +41,24 @@ namespace StockPicker.Services
 
         /// <summary>Remove a position from the held list (sold / closed out).</summary>
         void RemoveFromHeld(string symbol);
+
+        // --- Daily picks cache ---
+
+        /// <summary>
+        /// Returns the cached daily picks if they were generated for
+        /// <paramref name="targetDate"/>, otherwise returns null.
+        /// </summary>
+        System.Collections.Generic.IReadOnlyList<DayPick>? GetCachedDayPicks(System.DateTime targetDate);
+
+        /// <summary>Persists daily picks for <paramref name="targetDate"/> to disk.</summary>
+        void SaveDayPicksCache(System.DateTime targetDate, System.Collections.Generic.IReadOnlyList<DayPick> picks);
+
+        // --- Market index cache ---
+
+        /// <summary>Returns the last-saved market index snapshots, or an empty list if none.</summary>
+        IReadOnlyList<MarketIndexSnapshot> GetCachedMarketIndices();
+
+        /// <summary>Persists fresh market index data so it shows instantly on next startup.</summary>
+        void SaveMarketIndicesCache(IReadOnlyList<MarketIndexSnapshot> snapshots);
     }
 }

@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -31,6 +33,23 @@ namespace StockPicker
                         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
                             new System.Action(() => RestoreSortToGrid(vm)));
                 };
+
+                // Keep the details column width in sync with ShowDetails.
+                // Visibility alone doesn't reclaim column space in a WPF Grid, so we
+                // set Width directly on ColumnDefinitions[2] via the named parent Grid.
+                void SyncDetailsColumn()
+                {
+                    if (vm.LayoutMode != LayoutMode.Full) return;
+                    FullBodyGrid.ColumnDefinitions[2].Width = vm.ShowDetails
+                        ? new System.Windows.GridLength(2, System.Windows.GridUnitType.Star)
+                        : new System.Windows.GridLength(0);
+                }
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName is nameof(MainViewModel.ShowDetails) or nameof(MainViewModel.LayoutMode))
+                        SyncDetailsColumn();
+                };
+                SyncDetailsColumn();
 
                 await vm.StartupAsync();
                 RestoreSortToGrid(vm);
@@ -185,13 +204,25 @@ namespace StockPicker
 
         private void RemoveFromWatch_Click(object sender, RoutedEventArgs e)
         {
-            if (DataContext is not MainViewModel vm || vm.SelectedWatch == null) return;
-            var result = MessageBox.Show(
-                $"Remove {vm.SelectedWatch.Symbol} from your watch list?",
-                "Confirm Remove", MessageBoxButton.YesNo,
-                MessageBoxImage.Question, MessageBoxResult.No);
+            if (DataContext is not MainViewModel vm) return;
+
+            // Collect selected items from whichever grid is visible
+            var grid = WatchGridFull.IsVisible ? WatchGridFull : WatchGridCompact;
+            var selected = grid.SelectedItems
+                               .OfType<StockPicker.Models.Recommendation>()
+                               .ToList();
+
+            if (selected.Count == 0) return;
+
+            var msg = selected.Count == 1
+                ? $"Remove {selected[0].Symbol} from your watch list?"
+                : $"Remove {selected.Count} stocks from your watch list?";
+
+            var result = MessageBox.Show(msg, "Confirm Remove",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+
             if (result == MessageBoxResult.Yes)
-                vm.RemoveFromWatchCommand.Execute(null);
+                vm.RemoveMultipleFromWatch(selected.Select(r => r.Symbol));
         }
 
         private void RemoveFromPosition_Click(object sender, RoutedEventArgs e)

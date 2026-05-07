@@ -63,6 +63,10 @@ namespace StockPicker.Models
         public double?  SMA20          { get; set; }
         public double?  SMA50          { get; set; }
         public double?  VolumeTrend    { get; set; }
+        public double?  VolumeRatio    { get; set; }   // current vol / avg vol
+        public double?  GapPct         { get; set; }   // overnight gap %
+        public double?  AtrPct         { get; set; }   // ATR as % of price
+        public decimal? StopLoss       { get; set; }   // suggested stop-loss level
 
         // ── Live market data (from Yahoo Finance quote) ───────────────────────
         public decimal? LastPrice       { get; set; }   // regularMarketPrice
@@ -80,6 +84,20 @@ namespace StockPicker.Models
         public double?  Beta            { get; set; }
         public double?  DividendYieldPct { get; set; }  // already in %
         public double?  ShortRatio      { get; set; }
+
+        // ── Options Greeks ────────────────────────────────────────────────────
+        /// <summary>Implied volatility of the near-term ATM option (fraction, e.g. 0.30 = 30%).</summary>
+        public double?  ImpliedVolatility { get; set; }
+        /// <summary>Theta — time-decay cost per day in $ for the near-term ATM option.</summary>
+        public double?  Theta             { get; set; }
+
+        /// <summary>Implied volatility formatted as a percentage string, e.g. "32.5%".</summary>
+        public string ImpliedVolatilityPctDisplay =>
+            ImpliedVolatility.HasValue ? $"{ImpliedVolatility.Value * 100.0:F1}%" : "";
+
+        /// <summary>Theta formatted with two decimal places, e.g. "-0.08".</summary>
+        public string ThetaDisplay =>
+            Theta.HasValue ? $"{Theta.Value:F2}" : "";
 
         // ── HeldPosition compatibility (used by Details pane shared template) ─
         public decimal? EntryPrice      { get; set; }
@@ -149,6 +167,10 @@ namespace StockPicker.Models
             WeekReturnPct.HasValue
                 ? (WeekReturnPct >= 0 ? $"+{WeekReturnPct:F2}%" : $"{WeekReturnPct:F2}%")
                 : "";
+
+        public string VolumeRatioDisplay => VolumeRatio.HasValue ? $"{VolumeRatio.Value:F2}×" : "";
+        public string GapPctDisplay     => GapPct.HasValue    ? (GapPct >= 0 ? $"+{GapPct:F2}%" : $"{GapPct:F2}%") : "";
+        public string AtrPctDisplay     => AtrPct.HasValue    ? $"{AtrPct.Value:F2}%"  : "";
 
         public string VolumeDisplay    => FormatLarge(Volume);
         public string AvgVolumeDisplay => FormatLarge(AvgVolume);
