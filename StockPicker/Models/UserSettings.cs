@@ -55,5 +55,15 @@ namespace StockPicker.Models
         /// Empty string means use the provider's default.
         /// </summary>
         public string LastStrategyName { get; set; } = string.Empty;
+
+        // ── Daily Picks settings ───────────────────────────────────────────────
+        /// <summary>Scoring strategy for Daily Picks. Stored as enum name.</summary>
+        public string DayPickStrategy { get; set; } = nameof(StockPicker.Models.DayPickStrategy.Momentum);
+
+        /// <summary>
+        /// Maximum number of stocks passed to the Daily Picks engine.
+        /// 0 means "use all available from the last scan".
+        /// </summary>
+        public int DayPickUniverseSize { get; set; } = 0;
     }
 }

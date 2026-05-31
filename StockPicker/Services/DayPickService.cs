@@ -7,43 +7,30 @@ using StockPicker.Models;
 namespace StockPicker.Services
 {
     /// <summary>
-    /// Scores every stock in the universe for intraday trading viability and returns
-    /// the highest-scoring candidates as "Stock of the Day" picks.
-    ///
-    /// Scoring signals (all computed from the cached daily OHLCV data + live quotes):
-    ///
-    ///   1. Volume Surge  (0–3 pts) — today's volume vs 3-month avg daily volume.
-    ///      High relative volume signals institutional activity and tight spreads.
-    ///
-    ///   2. Gap Magnitude (0–2 pts) — opening gap vs prior close (absolute %).
-    ///      Large gaps attract momentum traders and create high-probability setups.
-    ///
-    ///   3. Intraday Move (0–2 pts) — magnitude of today's price change so far.
-    ///      Strong directional moves show conviction and continuation potential.
-    ///
-    ///   4. ATR Volatility(0–1.5 pts) — 14-day Average True Range as % of price.
-    ///      Higher ATR means more intraday range = more opportunity for day traders.
-    ///
-    ///   5. RSI Setup     (0–1 pt)  — RSI quality for the directional bias.
-    ///      Momentum RSI (55–75) for longs; oversold RSI (&lt;35) for bounce plays.
-    ///
-    /// Picks below a minimum composite score are filtered out before ranking.
-    /// The top <see cref="MaxPicks"/> are returned, sorted by score descending.
+    /// Scores every stock in the universe for intraday trading viability.
+    /// Supports four strategies: Momentum, MeanReversion, Breakout, EarningsPlay.
     /// </summary>
     public class DayPickService : IDayPickService
     {
-        private const int    MaxPicks      = 10;
-        private const int    MinPicks      = 5;     // always return at least this many (top-ranked fallback)
-        private const double MinScore      = 1.5;   // floor — below this = not worth flagging
-        private const double AtrMultStop   = 1.5;   // stop = 1.5× ATR from entry
-        private const double AtrMultTarget = 2.5;   // target = 2.5× ATR from entry
+        private const int    MaxPicks     = 10;
+        private const int    MinPicks     = 5;
+        private const double AtrMultStop  = 1.5;
+        private const double AtrMultTarget= 2.5;
 
         public Task<IReadOnlyList<DayPick>> GenerateAsync(
-            IReadOnlyList<Stock>                                      universe,
-            IReadOnlyDictionary<string, IReadOnlyList<StockQuote>>    history,
-            IReadOnlyDictionary<string, QuoteSummary>                 summaries,
-            IReadOnlyDictionary<string, (string Name, string Sector)>? nameLookup)
+            IReadOnlyList<Stock>                                       universe,
+            IReadOnlyDictionary<string, IReadOnlyList<StockQuote>>     history,
+            IReadOnlyDictionary<string, QuoteSummary>                  summaries,
+            IReadOnlyDictionary<string, (string Name, string Sector)>? nameLookup,
+            DayPickStrategy strategy = DayPickStrategy.Momentum)
         {
+            double minScore = strategy switch
+            {
+                DayPickStrategy.MeanReversion => 1.0,
+                DayPickStrategy.EarningsPlay  => 1.0,
+                _                             => 1.5,
+            };
+
             var candidates = new List<DayPick>(universe.Count);
 
             foreach (var stock in universe)
@@ -51,292 +38,422 @@ namespace StockPicker.Services
                 history.TryGetValue(stock.Symbol, out var bars);
                 summaries.TryGetValue(stock.Symbol, out var quote);
 
-                // Need at least 15 bars for ATR-14 + gap (prev close)
-                if (bars == null || bars.Count < 15) continue;
-                if (quote == null) continue;
+                if (bars == null || bars.Count < 15 || quote == null) continue;
 
-                var pick = ScoreStock(stock, bars, quote);
-                if (pick != null)
-                {
-                    // Fill in name / sector from the universe or name lookup
-                    if (nameLookup != null &&
-                        nameLookup.TryGetValue(stock.Symbol, out var info))
-                    {
-                        pick.CompanyName = info.Name;
-                        pick.Sector      = info.Sector;
-                    }
-                    else
-                    {
-                        pick.CompanyName = stock.Name;
-                        pick.Sector      = stock.Sector;
-                    }
+                var pick = ScoreStock(stock, bars, quote, strategy, minScore);
+                if (pick == null) continue;
 
-                    // Prefer the richer name from the live quote when available
-                    if (!string.IsNullOrWhiteSpace(quote.LongName))
-                        pick.CompanyName = quote.LongName;
-
-                    candidates.Add(pick);
-                }
+                EnrichName(pick, stock, quote, nameLookup);
+                candidates.Add(pick);
             }
 
-            // Sort by score desc, take top MaxPicks
             var sorted = candidates
                 .OrderByDescending(p => p.IntraDayScore)
                 .Take(MaxPicks)
                 .ToList();
 
-            // Fallback: if the threshold filtered everything out, promote the top-ranked
-            // scorers so the user always sees something rather than a blank list.
+            // Fallback: always surface at least MinPicks
             if (sorted.Count < MinPicks)
             {
-                // Score every stock that was skipped (score < MinScore OR had < 15 bars) —
-                // re-score the full universe with no floor and take the best ones.
                 var fallback = new List<DayPick>(universe.Count);
                 foreach (var stock in universe)
                 {
                     if (sorted.Any(p => p.Symbol.Equals(stock.Symbol, StringComparison.OrdinalIgnoreCase)))
-                        continue; // already in list
+                        continue;
 
                     history.TryGetValue(stock.Symbol, out var bars);
                     summaries.TryGetValue(stock.Symbol, out var quote);
                     if (bars == null || bars.Count < 2 || quote == null) continue;
 
-                    var pick = ScoreStock(stock, bars, quote, minScoreOverride: 0);
+                    var pick = ScoreStock(stock, bars, quote, strategy, minScoreOverride: 0);
                     if (pick == null) continue;
 
-                    if (nameLookup != null && nameLookup.TryGetValue(stock.Symbol, out var info))
-                    { pick.CompanyName = info.Name; pick.Sector = info.Sector; }
-                    else
-                    { pick.CompanyName = stock.Name; pick.Sector = stock.Sector; }
-
-                    if (!string.IsNullOrWhiteSpace(quote.LongName))
-                        pick.CompanyName = quote.LongName;
-
+                    EnrichName(pick, stock, quote, nameLookup);
                     fallback.Add(pick);
                 }
 
                 var needed = MinPicks - sorted.Count;
-                sorted.AddRange(
-                    fallback.OrderByDescending(p => p.IntraDayScore).Take(needed));
+                sorted.AddRange(fallback.OrderByDescending(p => p.IntraDayScore).Take(needed));
                 sorted = sorted.OrderByDescending(p => p.IntraDayScore).ToList();
             }
 
             return Task.FromResult<IReadOnlyList<DayPick>>(sorted);
         }
 
-        // ── Per-stock scoring ─────────────────────────────────────────────────
+        // ── Name enrichment helper ────────────────────────────────────────────
 
-        /// <summary>
-        /// Returns a <see cref="DayPick"/> if the stock meets the minimum intraday
-        /// score threshold, or <c>null</c> if it should be excluded.
-        /// </summary>
+        private static void EnrichName(
+            DayPick pick, Stock stock, QuoteSummary quote,
+            IReadOnlyDictionary<string, (string Name, string Sector)>? nameLookup)
+        {
+            if (nameLookup != null && nameLookup.TryGetValue(stock.Symbol, out var info))
+            { pick.CompanyName = info.Name; pick.Sector = info.Sector; }
+            else
+            { pick.CompanyName = stock.Name; pick.Sector = stock.Sector; }
+
+            if (!string.IsNullOrWhiteSpace(quote.LongName))
+                pick.CompanyName = quote.LongName;
+        }
+
+        // ── Strategy dispatcher ───────────────────────────────────────────────
+
         private static DayPick? ScoreStock(
             Stock stock,
             IReadOnlyList<StockQuote> bars,
             QuoteSummary quote,
-            double minScoreOverride = MinScore)
+            DayPickStrategy strategy,
+            double minScoreOverride = -1)
         {
-            double[] closes  = bars.Select(b => (double)b.Close).ToArray();
-            double[] highs   = bars.Select(b => (double)b.High).ToArray();
-            double[] lows    = bars.Select(b => (double)b.Low).ToArray();
-            double[] volumes = bars.Select(b => (double)b.Volume).ToArray();
-            double[] opens   = bars.Select(b => (double)b.Open).ToArray();
+            return strategy switch
+            {
+                DayPickStrategy.MeanReversion => ScoreMeanReversion(stock, bars, quote, minScoreOverride),
+                DayPickStrategy.Breakout      => ScoreBreakout(stock, bars, quote, minScoreOverride),
+                DayPickStrategy.EarningsPlay  => ScoreEarningsPlay(stock, bars, quote, minScoreOverride),
+                _                             => ScoreMomentum(stock, bars, quote, minScoreOverride),
+            };
+        }
 
-            double lastClose = closes[^1];
-            double prevClose = closes[^2];
-            double todayOpen = opens[^1];
-            double todayHigh = highs[^1];
-            double todayLow  = lows[^1];
+        // ── Strategy 1: Momentum (original) ──────────────────────────────────
 
+        private static DayPick? ScoreMomentum(
+            Stock stock, IReadOnlyList<StockQuote> bars, QuoteSummary quote,
+            double minScore)
+        {
+            var (closes, highs, lows, volumes, opens) = ExtractArrays(bars);
+            double lastClose = closes[^1], prevClose = closes[^2], todayOpen = opens[^1];
             if (lastClose <= 0 || prevClose <= 0) return null;
 
-            // ── 1. Gap % (open vs previous close) ─────────────────────────────
-            double gapPct = prevClose != 0
-                ? ((todayOpen - prevClose) / prevClose) * 100.0
-                : 0.0;
-
-            // ── 2. ATR-14 ──────────────────────────────────────────────────────
-            double atr14 = ComputeAtr(closes, highs, lows, 14);
-            double atrPct = lastClose > 0 ? (atr14 / lastClose) * 100.0 : 0.0;
-
-            // Skip stocks with negligible intraday range (e.g. < 0.5% ATR)
+            double gapPct      = prevClose != 0 ? ((todayOpen - prevClose) / prevClose) * 100.0 : 0;
+            double atr14       = ComputeAtr(closes, highs, lows, 14);
+            double atrPct      = lastClose > 0 ? (atr14 / lastClose) * 100.0 : 0;
             if (atrPct < 0.5) return null;
 
-            // ── 3. RSI-14 ─────────────────────────────────────────────────────
-            double rsi14 = ComputeRsi(closes, 14);
+            double rsi14       = ComputeRsi(closes, 14);
+            double volumeRatio = CalcVolumeRatio(quote, volumes);
+            decimal lastPrice  = quote.Price ?? (decimal)lastClose;
+            double dayChangePct= quote.DayChangePct ?? 0.0;
 
-            // ── 4. Volume ratio ───────────────────────────────────────────────
-            double volumeRatio;
-            if (quote.Volume > 0 && quote.AvgVolume > 0)
-            {
-                volumeRatio = (double)quote.Volume / (double)quote.AvgVolume;
-            }
-            else
-            {
-                // Fallback: recent 5-day vol vs 20-day baseline from history
-                volumeRatio = volumes.Length >= 20
-                    ? volumes.Skip(volumes.Length - 5).Average() /
-                      volumes.Skip(volumes.Length - 20).Average()
-                    : 1.0;
-            }
+            double score = 0; var reasons = new List<string>(6);
 
-            // ── 5. Today's price-change magnitude ─────────────────────────────
-            decimal lastPrice = quote.Price ?? (decimal)lastClose;
-            double dayChangePct = quote.DayChangePct ?? 0.0;
-
-            // ── Composite score ───────────────────────────────────────────────
-            double score = 0;
-            var    reasons = new List<string>(6);
-
-            // Signal 1 — Volume Surge (0–3 pts)
-            if (volumeRatio >= 3.0)      { score += 3.0; reasons.Add($"Volume surge {volumeRatio:F1}×"); }
+            // Volume surge (0–3)
+            if      (volumeRatio >= 3.0) { score += 3.0; reasons.Add($"Volume surge {volumeRatio:F1}×"); }
             else if (volumeRatio >= 2.0) { score += 2.0; reasons.Add($"High volume {volumeRatio:F1}×"); }
             else if (volumeRatio >= 1.5) { score += 1.5; reasons.Add($"Volume {volumeRatio:F1}× avg"); }
             else if (volumeRatio >= 1.2) { score += 0.8; reasons.Add($"Above-avg vol {volumeRatio:F1}×"); }
-            else                         {               /* no bonus for average or light volume */ }
 
-            // Signal 2 — Gap Magnitude (0–2 pts, absolute value — gap direction → Direction)
+            // Gap (0–2)
             double absGap = Math.Abs(gapPct);
             if      (absGap >= 5.0) { score += 2.0; reasons.Add($"Large gap {gapPct:+0.##;-0.##}%"); }
             else if (absGap >= 3.0) { score += 1.5; reasons.Add($"Gap {gapPct:+0.##;-0.##}%"); }
             else if (absGap >= 1.5) { score += 1.0; reasons.Add($"Gap {gapPct:+0.##;-0.##}%"); }
             else if (absGap >= 0.5) { score += 0.5; reasons.Add($"Small gap {gapPct:+0.##;-0.##}%"); }
 
-            // Signal 3 — Intraday Move (0–2 pts)
+            // Intraday move (0–2)
             double absDayChg = Math.Abs(dayChangePct);
             if      (absDayChg >= 5.0) { score += 2.0; reasons.Add($"Strong move {dayChangePct:+0.##;-0.##}%"); }
             else if (absDayChg >= 3.0) { score += 1.5; reasons.Add($"Solid move {dayChangePct:+0.##;-0.##}%"); }
             else if (absDayChg >= 2.0) { score += 1.0; reasons.Add($"Move {dayChangePct:+0.##;-0.##}%"); }
             else if (absDayChg >= 1.0) { score += 0.5; }
 
-            // Signal 4 — ATR volatility (0–1.5 pts)
-            if      (atrPct >= 4.0) { score += 1.5; reasons.Add($"High ATR {atrPct:F1}% (wide range)"); }
-            else if (atrPct >= 2.5) { score += 1.0; reasons.Add($"ATR {atrPct:F1}% (active)"); }
+            // ATR volatility (0–1.5)
+            if      (atrPct >= 4.0) { score += 1.5; reasons.Add($"High ATR {atrPct:F1}%"); }
+            else if (atrPct >= 2.5) { score += 1.0; reasons.Add($"ATR {atrPct:F1}%"); }
             else if (atrPct >= 1.5) { score += 0.5; }
 
-            // Signal 5 — RSI quality for direction (0–1 pt)
-            // Long setup: RSI 45–75 (momentum zone, room to run)
-            // Short setup: RSI 65–80 (overextended, fade candidate)
-            // Oversold bounce: RSI < 35 (long mean-reversion)
-            bool intendLong = dayChangePct >= 0;   // preliminary direction guess
+            // RSI quality (0–1)
+            bool intendLong = dayChangePct >= 0;
             if (intendLong)
             {
-                if      (rsi14 >= 55 && rsi14 <= 75) { score += 1.0; reasons.Add($"RSI {rsi14:F0} (bullish momentum)"); }
+                if      (rsi14 >= 55 && rsi14 <= 75) { score += 1.0; reasons.Add($"RSI {rsi14:F0} (momentum)"); }
                 else if (rsi14 >= 45 && rsi14 <  55) { score += 0.5; }
-                else if (rsi14 < 35)                  { score += 0.8; reasons.Add($"RSI {rsi14:F0} (oversold bounce)"); }
+                else if (rsi14 < 35)                  { score += 0.8; reasons.Add($"RSI {rsi14:F0} (oversold)"); }
             }
             else
             {
-                if      (rsi14 >= 65 && rsi14 <= 80) { score += 1.0; reasons.Add($"RSI {rsi14:F0} (extended, short)"); }
+                if      (rsi14 >= 65 && rsi14 <= 80) { score += 1.0; reasons.Add($"RSI {rsi14:F0} (extended)"); }
                 else if (rsi14 >  80)                 { score += 0.8; reasons.Add($"RSI {rsi14:F0} (overbought)"); }
                 else if (rsi14 >= 55 && rsi14 <  65) { score += 0.5; }
             }
 
-            // ── Filter ────────────────────────────────────────────────────────
-            if (score < minScoreOverride) return null;
+            if (score < minScore) return null;
 
-            // ── Direction ─────────────────────────────────────────────────────
-            // Primary cue: today's price change direction
-            // Tie-break: gap direction
-            DayPickDirection direction;
-            if (dayChangePct > 0.1)       direction = DayPickDirection.Long;
-            else if (dayChangePct < -0.1) direction = DayPickDirection.Short;
-            else                          direction = gapPct >= 0 ? DayPickDirection.Long : DayPickDirection.Short;
+            var direction = DirectionFromChange(dayChangePct, gapPct);
+            return BuildPick(stock, lastPrice, atr14, atrPct, gapPct, rsi14, volumeRatio,
+                             dayChangePct, direction, score, reasons);
+        }
 
-            // ── Trade levels ──────────────────────────────────────────────────
-            decimal atrDec    = (decimal)atr14;
-            decimal stopDist  = atrDec * (decimal)AtrMultStop;
-            decimal tgtDist   = atrDec * (decimal)AtrMultTarget;
+        // ── Strategy 2: Mean Reversion ────────────────────────────────────────
 
-            decimal? stopLoss = direction == DayPickDirection.Long
-                ? lastPrice - stopDist
+        private static DayPick? ScoreMeanReversion(
+            Stock stock, IReadOnlyList<StockQuote> bars, QuoteSummary quote,
+            double minScore)
+        {
+            var (closes, highs, lows, volumes, opens) = ExtractArrays(bars);
+            double lastClose = closes[^1], prevClose = closes[^2];
+            if (lastClose <= 0 || prevClose <= 0) return null;
+
+            double atr14       = ComputeAtr(closes, highs, lows, 14);
+            double atrPct      = lastClose > 0 ? (atr14 / lastClose) * 100.0 : 0;
+            if (atrPct < 0.3) return null;
+
+            double rsi14       = ComputeRsi(closes, 14);
+            double sma20       = closes.Length >= 20 ? closes.Skip(closes.Length - 20).Average() : lastClose;
+            double volumeRatio = CalcVolumeRatio(quote, volumes);
+            decimal lastPrice  = quote.Price ?? (decimal)lastClose;
+            double dayChangePct= quote.DayChangePct ?? 0.0;
+
+            // Mean reversion only wants beaten-down stocks
+            if (rsi14 > 45) return null;
+
+            double score = 0; var reasons = new List<string>(6);
+
+            // Oversold RSI (0–3)
+            if      (rsi14 < 20) { score += 3.0; reasons.Add($"RSI {rsi14:F0} (extreme oversold)"); }
+            else if (rsi14 < 25) { score += 2.5; reasons.Add($"RSI {rsi14:F0} (very oversold)"); }
+            else if (rsi14 < 30) { score += 2.0; reasons.Add($"RSI {rsi14:F0} (oversold)"); }
+            else if (rsi14 < 35) { score += 1.5; reasons.Add($"RSI {rsi14:F0} (near oversold)"); }
+            else if (rsi14 < 40) { score += 0.8; reasons.Add($"RSI {rsi14:F0} (weak)"); }
+            else                 { score += 0.3; }
+
+            // Price below SMA20 (0–2)
+            double pctBelowSma = sma20 > 0 ? ((sma20 - lastClose) / sma20) * 100.0 : 0;
+            if      (pctBelowSma >= 8.0) { score += 2.0; reasons.Add($"{pctBelowSma:F1}% below SMA20"); }
+            else if (pctBelowSma >= 5.0) { score += 1.5; reasons.Add($"{pctBelowSma:F1}% below SMA20"); }
+            else if (pctBelowSma >= 3.0) { score += 1.0; reasons.Add($"{pctBelowSma:F1}% below SMA20"); }
+            else if (pctBelowSma >= 1.5) { score += 0.5; }
+            else return null; // not actually below SMA20 — skip
+
+            // Volume drying up = low sell pressure, potential reversal (0–1)
+            if      (volumeRatio < 0.5) { score += 1.0; reasons.Add("Volume drying up"); }
+            else if (volumeRatio < 0.8) { score += 0.5; reasons.Add("Low volume"); }
+
+            // Today's candle — small loss or early bounce is better (0–1)
+            if      (dayChangePct > 0)              { score += 1.0; reasons.Add("Early bounce"); }
+            else if (dayChangePct > -1.0)           { score += 0.5; }
+
+            // ATR — need some range for the bounce (0–1)
+            if      (atrPct >= 3.0) { score += 1.0; }
+            else if (atrPct >= 1.5) { score += 0.5; }
+
+            if (score < minScore) return null;
+
+            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+                             dayChangePct, DayPickDirection.Long, score, reasons);
+        }
+
+        // ── Strategy 3: Breakout ──────────────────────────────────────────────
+
+        private static DayPick? ScoreBreakout(
+            Stock stock, IReadOnlyList<StockQuote> bars, QuoteSummary quote,
+            double minScore)
+        {
+            var (closes, highs, lows, volumes, opens) = ExtractArrays(bars);
+            double lastClose = closes[^1], todayHigh = highs[^1];
+            if (lastClose <= 0) return null;
+
+            double atr14       = ComputeAtr(closes, highs, lows, 14);
+            double atrPct      = lastClose > 0 ? (atr14 / lastClose) * 100.0 : 0;
+            if (atrPct < 0.5) return null;
+
+            double rsi14       = ComputeRsi(closes, 14);
+            double volumeRatio = CalcVolumeRatio(quote, volumes);
+            decimal lastPrice  = quote.Price ?? (decimal)lastClose;
+            double dayChangePct= quote.DayChangePct ?? 0.0;
+
+            // 20-day high (resistance level)
+            int window = Math.Min(20, closes.Length - 1);
+            double high20 = highs.Skip(highs.Length - 1 - window).Take(window).Max();
+
+            double score = 0; var reasons = new List<string>(6);
+
+            // Breaking above 20-day high (0–3)
+            if (todayHigh >= high20)
+            {
+                double breakPct = ((todayHigh - high20) / high20) * 100.0;
+                if      (breakPct >= 3.0) { score += 3.0; reasons.Add($"Breaking out +{breakPct:F1}% above 20d high"); }
+                else if (breakPct >= 1.5) { score += 2.5; reasons.Add($"Breaking out +{breakPct:F1}% above 20d high"); }
+                else if (breakPct >= 0.5) { score += 2.0; reasons.Add("Testing 20d high breakout"); }
+                else                      { score += 1.5; reasons.Add("At 20d high"); }
+            }
+            else
+            {
+                double pctFromHigh = ((high20 - todayHigh) / high20) * 100.0;
+                if (pctFromHigh > 3.0) return null; // too far from breakout level
+                score += 0.8; reasons.Add($"{pctFromHigh:F1}% from 20d breakout");
+            }
+
+            // Volume confirmation (0–2)
+            if      (volumeRatio >= 2.5) { score += 2.0; reasons.Add($"Vol {volumeRatio:F1}× confirms breakout"); }
+            else if (volumeRatio >= 1.8) { score += 1.5; reasons.Add($"Vol {volumeRatio:F1}× above avg"); }
+            else if (volumeRatio >= 1.3) { score += 1.0; reasons.Add($"Vol {volumeRatio:F1}× avg"); }
+            else                         { score -= 1.0; } // breakout on light vol = suspect
+
+            // RSI — momentum zone preferred for breakouts (0–1)
+            if      (rsi14 >= 55 && rsi14 <= 70) { score += 1.0; reasons.Add($"RSI {rsi14:F0} (momentum)"); }
+            else if (rsi14 >= 45 && rsi14 <  55) { score += 0.5; }
+            else if (rsi14 > 75)                  { score -= 0.5; reasons.Add($"RSI {rsi14:F0} (stretched)"); }
+
+            // Intraday strength (0–1)
+            if      (dayChangePct >= 3.0) { score += 1.0; reasons.Add($"Up {dayChangePct:F1}% today"); }
+            else if (dayChangePct >= 1.5) { score += 0.5; }
+            else if (dayChangePct <= 0)   { score -= 0.5; }
+
+            if (score < minScore) return null;
+
+            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+                             dayChangePct, DayPickDirection.Long, score, reasons);
+        }
+
+        // ── Strategy 4: Earnings Play ─────────────────────────────────────────
+
+        private static DayPick? ScoreEarningsPlay(
+            Stock stock, IReadOnlyList<StockQuote> bars, QuoteSummary quote,
+            double minScore)
+        {
+            var (closes, highs, lows, volumes, opens) = ExtractArrays(bars);
+            double lastClose = closes[^1];
+            if (lastClose <= 0) return null;
+
+            double atr14       = ComputeAtr(closes, highs, lows, 14);
+            double atrPct      = lastClose > 0 ? (atr14 / lastClose) * 100.0 : 0;
+            if (atrPct < 0.5) return null;
+
+            double rsi14       = ComputeRsi(closes, 14);
+            double volumeRatio = CalcVolumeRatio(quote, volumes);
+            decimal lastPrice  = quote.Price ?? (decimal)lastClose;
+            double dayChangePct= quote.DayChangePct ?? 0.0;
+
+            double score = 0; var reasons = new List<string>(6);
+
+            // Elevated implied volatility signals upcoming catalyst (0–3)
+            // We approximate IV expectation via recent ATR expansion vs 20-day avg ATR
+            int atrWindow = Math.Min(20, closes.Length - 1);
+            double atrNow = atr14;
+            double atrAvg = closes.Length >= 20
+                ? ComputeAtr(closes.Take(closes.Length - 1).ToArray(),
+                             highs.Take(highs.Length - 1).ToArray(),
+                             lows.Take(lows.Length - 1).ToArray(), 14)
+                : atrNow;
+            double ivExpansion = atrAvg > 0 ? atrNow / atrAvg : 1.0;
+
+            if      (ivExpansion >= 2.0) { score += 3.0; reasons.Add($"ATR {ivExpansion:F1}× expanded (high IV)"); }
+            else if (ivExpansion >= 1.5) { score += 2.0; reasons.Add($"ATR {ivExpansion:F1}× expanded"); }
+            else if (ivExpansion >= 1.2) { score += 1.0; reasons.Add($"ATR {ivExpansion:F1}× slightly expanded"); }
+            else                         { score += 0.3; }
+
+            // Volume surge — often precedes earnings (0–2)
+            if      (volumeRatio >= 3.0) { score += 2.0; reasons.Add($"Volume surge {volumeRatio:F1}× (catalyst?)"); }
+            else if (volumeRatio >= 2.0) { score += 1.5; reasons.Add($"High volume {volumeRatio:F1}×"); }
+            else if (volumeRatio >= 1.5) { score += 1.0; reasons.Add($"Volume {volumeRatio:F1}× avg"); }
+
+            // High ATR % = wide expected move (0–1.5)
+            if      (atrPct >= 5.0) { score += 1.5; reasons.Add($"Wide ATR {atrPct:F1}%"); }
+            else if (atrPct >= 3.0) { score += 1.0; reasons.Add($"ATR {atrPct:F1}%"); }
+            else if (atrPct >= 2.0) { score += 0.5; }
+
+            // Price momentum direction (0–0.5) — slight preference for bullish setup
+            if (dayChangePct > 1.0) { score += 0.5; reasons.Add($"Up {dayChangePct:F1}% into event"); }
+
+            if (score < minScore) return null;
+
+            var direction = DirectionFromChange(dayChangePct, 0);
+            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+                             dayChangePct, direction, score, reasons);
+        }
+
+        // ── Shared helpers ────────────────────────────────────────────────────
+
+        private static DayPick BuildPick(
+            Stock stock, decimal lastPrice,
+            double atr14, double atrPct, double gapPct,
+            double rsi14, double volumeRatio, double dayChangePct,
+            DayPickDirection direction, double score, List<string> reasons)
+        {
+            decimal atrDec   = (decimal)atr14;
+            decimal stopDist = atrDec * (decimal)AtrMultStop;
+            decimal tgtDist  = atrDec * (decimal)AtrMultTarget;
+
+            decimal stopLoss = direction == DayPickDirection.Long
+                ? Math.Max(0.01m, lastPrice - stopDist)
                 : lastPrice + stopDist;
-            decimal? target   = direction == DayPickDirection.Long
+            decimal target   = direction == DayPickDirection.Long
                 ? lastPrice + tgtDist
-                : lastPrice - tgtDist;
-
-            // Clamp stop to avoid negative prices
-            if (stopLoss < 0.01m) stopLoss = 0.01m;
-            if (target   < 0.01m) target   = 0.01m;
+                : Math.Max(0.01m, lastPrice - tgtDist);
 
             return new DayPick
             {
-                Symbol       = stock.Symbol,
-                Direction    = direction,
-                EntryPrice   = lastPrice,
-                StopLoss     = Math.Round(stopLoss.Value, 2),
-                Target       = Math.Round(target.Value,   2),
+                Symbol        = stock.Symbol,
+                Direction     = direction,
+                EntryPrice    = lastPrice,
+                LastPrice     = lastPrice,
+                StopLoss      = Math.Round(stopLoss, 2),
+                Target        = Math.Round(target, 2),
                 IntraDayScore = Math.Round(score, 2),
-                VolumeRatio  = Math.Round(volumeRatio, 2),
-                GapPct       = Math.Round(gapPct, 2),
-                AtrPct       = Math.Round(atrPct, 2),
-                RSI14        = Math.Round(rsi14, 1),
-                LastPrice    = lastPrice,
-                DayChangePct = Math.Round(dayChangePct, 2),
-                TriggerReason = reasons.Count > 0
-                    ? string.Join(" | ", reasons)
-                    : "Composite signal",
-                GeneratedAt  = DateTime.Now,
+                VolumeRatio   = Math.Round(volumeRatio, 2),
+                GapPct        = Math.Round(gapPct, 2),
+                AtrPct        = Math.Round(atrPct, 2),
+                RSI14         = Math.Round(rsi14, 1),
+                DayChangePct  = Math.Round(dayChangePct, 2),
+                TriggerReason = reasons.Count > 0 ? string.Join(" | ", reasons) : "Composite signal",
+                GeneratedAt   = DateTime.Now,
             };
         }
 
-        // ── Technical indicator helpers ───────────────────────────────────────
-
-        /// <summary>
-        /// Computes the 14-period Average True Range (simple average of true ranges).
-        /// Returns 0 if there are fewer than 2 bars.
-        /// </summary>
-        private static double ComputeAtr(
-            double[] closes, double[] highs, double[] lows, int period)
+        private static DayPickDirection DirectionFromChange(double dayChangePct, double gapPct)
         {
-            if (closes.Length < 2) return 0.0;
-
-            int startIdx = Math.Max(1, closes.Length - period);
-            double sum = 0;
-            int count = 0;
-
-            for (int i = startIdx; i < closes.Length; i++)
-            {
-                double hl    = highs[i]  - lows[i];
-                double hpc   = Math.Abs(highs[i]  - closes[i - 1]);
-                double lpc   = Math.Abs(lows[i]   - closes[i - 1]);
-                double tr    = Math.Max(hl, Math.Max(hpc, lpc));
-                sum += tr;
-                count++;
-            }
-
-            return count > 0 ? sum / count : 0.0;
+            if (dayChangePct > 0.1)       return DayPickDirection.Long;
+            if (dayChangePct < -0.1)      return DayPickDirection.Short;
+            return gapPct >= 0 ? DayPickDirection.Long : DayPickDirection.Short;
         }
 
-        /// <summary>
-        /// Computes Wilder's RSI over the last <paramref name="period"/> bars.
-        /// Returns 50 if there are insufficient bars.
-        /// </summary>
+        private static double CalcVolumeRatio(QuoteSummary quote, double[] volumes)
+        {
+            if (quote.Volume > 0 && quote.AvgVolume > 0)
+                return (double)quote.Volume / (double)quote.AvgVolume;
+            return volumes.Length >= 20
+                ? volumes.Skip(volumes.Length - 5).Average() /
+                  Math.Max(1, volumes.Skip(volumes.Length - 20).Average())
+                : 1.0;
+        }
+
+        private static (double[] closes, double[] highs, double[] lows, double[] volumes, double[] opens)
+            ExtractArrays(IReadOnlyList<StockQuote> bars)
+        {
+            var closes  = bars.Select(b => (double)b.Close).ToArray();
+            var highs   = bars.Select(b => (double)b.High).ToArray();
+            var lows    = bars.Select(b => (double)b.Low).ToArray();
+            var volumes = bars.Select(b => (double)b.Volume).ToArray();
+            var opens   = bars.Select(b => (double)b.Open).ToArray();
+            return (closes, highs, lows, volumes, opens);
+        }
+
+        private static double ComputeAtr(double[] closes, double[] highs, double[] lows, int period)
+        {
+            if (closes.Length < 2) return 0;
+            int n = Math.Min(period, closes.Length - 1);
+            double sum = 0;
+            for (int i = closes.Length - n; i < closes.Length; i++)
+            {
+                double tr = Math.Max(highs[i] - lows[i],
+                            Math.Max(Math.Abs(highs[i] - closes[i - 1]),
+                                     Math.Abs(lows[i]  - closes[i - 1])));
+                sum += tr;
+            }
+            return sum / n;
+        }
+
         private static double ComputeRsi(double[] closes, int period)
         {
-            if (closes.Length < period + 1) return 50.0;
-
-            int start = closes.Length - period - 1;
-            double avgGain = 0, avgLoss = 0;
-
-            for (int i = start; i < start + period; i++)
+            if (closes.Length < period + 1) return 50;
+            double gain = 0, loss = 0;
+            for (int i = closes.Length - period; i < closes.Length; i++)
             {
-                double chg = closes[i + 1] - closes[i];
-                if (chg > 0) avgGain += chg;
-                else         avgLoss += -chg;
+                double d = closes[i] - closes[i - 1];
+                if (d >= 0) gain += d; else loss -= d;
             }
-            avgGain /= period;
-            avgLoss /= period;
-
-            for (int i = start + period; i < closes.Length - 1; i++)
-            {
-                double chg = closes[i + 1] - closes[i];
-                avgGain = (avgGain * (period - 1) + (chg > 0 ? chg : 0)) / period;
-                avgLoss = (avgLoss * (period - 1) + (chg < 0 ? -chg : 0)) / period;
-            }
-
-            if (avgLoss == 0) return 100.0;
-            return 100.0 - (100.0 / (1 + avgGain / avgLoss));
+            if (loss == 0) return 100;
+            double rs = (gain / period) / (loss / period);
+            return 100.0 - (100.0 / (1.0 + rs));
         }
     }
 }

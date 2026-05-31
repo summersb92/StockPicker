@@ -121,8 +121,9 @@ namespace StockPicker.ViewModels
 
             ScanCommand            = new RelayCommand(async _ => await RunWeeklyScanAsync(), _ => !IsBusy);
             RefreshDayPicksCommand      = new RelayCommand(async _ => await GenerateDayPicksAsync(),       _ => !IsBusy && _cachedHistory != null);
-            ForceRefreshDayPicksCommand = new RelayCommand(async _ => await GenerateDayPicksAsync(force: true), _ => !IsBusy && _cachedHistory != null);
-            RefreshWatchPricesCommand   = new RelayCommand(async _ => await RefreshWatchPricesAsync(),     _ => !IsBusy && WatchList.Count > 0);
+            ForceRefreshDayPicksCommand  = new RelayCommand(async _ => await GenerateDayPicksAsync(force: true), _ => !IsBusy && _cachedHistory != null);
+            AskAIAboutPicksCommand       = new RelayCommand(_ => AskAIAboutPicks(),  _ => DayPicks.Count > 0);
+            RefreshWatchPricesCommand    = new RelayCommand(async _ => await RefreshWatchPricesAsync(),    _ => !IsBusy && WatchList.Count > 0);
 
             AddDayPickToWatchCommand = new RelayCommand(p => AddDayPickToWatch(p),    _ => SelectedDayPick != null);
             AddDayPickToHeldCommand  = new RelayCommand(p => AddDayPickToHeld(p),    _ => SelectedDayPick != null);
@@ -153,6 +154,11 @@ namespace StockPicker.ViewModels
             // Restore saved index (falls back to SP500 if absent from settings file).
             if (Enum.TryParse<IndexUniverse>(_userSettings.SelectedIndex, out var savedIndex))
                 _selectedIndex = savedIndex;
+
+            // Restore Daily Picks strategy and universe cap
+            if (Enum.TryParse<DayPickStrategy>(_userSettings.DayPickStrategy, out var savedStrat))
+                _selectedDayPickStrategy = savedStrat;
+            _dayPickUniverseSize = _userSettings.DayPickUniverseSize;
 
             // Restore saved weekly target (falls back to field default of 2.0m if not in settings).
             _targetProfitMarginPercent = _userSettings.TargetProfitMarginPercent;
@@ -300,7 +306,50 @@ namespace StockPicker.ViewModels
 
         private string _dayPicksStatus = "Run a scan to generate intraday picks.";
         /// <summary>Status line shown in the Day Picks tab header area.</summary>
-        public string DayPicksStatus
+
+        // ── Daily Picks strategy & universe ─────────────────────────────────
+
+        public static IReadOnlyList<DayPickStrategy> DayPickStrategyOptions { get; } =
+            new[] { DayPickStrategy.Momentum, DayPickStrategy.MeanReversion,
+                    DayPickStrategy.Breakout,  DayPickStrategy.EarningsPlay };
+
+        private DayPickStrategy _selectedDayPickStrategy = DayPickStrategy.Momentum;
+        public DayPickStrategy SelectedDayPickStrategy
+        {
+            get => _selectedDayPickStrategy;
+            set
+            {
+                if (SetProperty(ref _selectedDayPickStrategy, value))
+                {
+                    _userSettings.DayPickStrategy = value.ToString();
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateDayPicksAsync(force: true);
+                }
+            }
+        }
+
+        public static IReadOnlyList<int> DayPickUniverseSizeOptions { get; } =
+            new[] { 0, 50, 100, 250, 503 };
+
+        private int _dayPickUniverseSize = 0;   // 0 = use all cached
+        public int DayPickUniverseSize
+        {
+            get => _dayPickUniverseSize;
+            set
+            {
+                if (SetProperty(ref _dayPickUniverseSize, value))
+                {
+                    _userSettings.DayPickUniverseSize = value;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateDayPicksAsync(force: true);
+                }
+            }
+        }
+
+        public string DayPickUniverseSizeDisplay =>
+            _dayPickUniverseSize == 0 ? "All" : _dayPickUniverseSize.ToString();
+
+                public string DayPicksStatus
         {
             get => _dayPicksStatus;
             private set => SetProperty(ref _dayPicksStatus, value);
@@ -365,6 +414,9 @@ namespace StockPicker.ViewModels
                 {
                     ((RelayCommand)AddDayPickToWatchCommand).RaiseCanExecuteChanged();
                     ((RelayCommand)AddDayPickToHeldCommand).RaiseCanExecuteChanged();
+                    if (value != null) ActiveSelection = value;
+                    _ = LoadChartAsync(value?.Symbol);
+                    _ = LoadOptionsAsync(value?.Symbol);
                 }
             }
         }
@@ -782,8 +834,9 @@ namespace StockPicker.ViewModels
         public ICommand RemoveFromWatchCommand   { get; }
         public ICommand RemoveFromHeldCommand    { get; }
         public ICommand RefreshDayPicksCommand      { get; }
-        public ICommand ForceRefreshDayPicksCommand { get; }
-        public ICommand RefreshWatchPricesCommand   { get; }
+        public ICommand ForceRefreshDayPicksCommand  { get; }
+        public ICommand AskAIAboutPicksCommand        { get; }
+        public ICommand RefreshWatchPricesCommand     { get; }
         public ICommand AddDayPickToWatchCommand      { get; }
         public ICommand AddDayPickToHeldCommand       { get; }
         public ICommand PromoteWatchToPositionCommand { get; }
@@ -1420,18 +1473,25 @@ namespace StockPicker.ViewModels
                             kv => (IReadOnlyList<StockQuote>)kv.Value,
                             StringComparer.OrdinalIgnoreCase));
 
+                // Cap the universe for Daily Picks if the user set a limit
+                IReadOnlyList<Stock> pickUniverse = _dayPickUniverseSize > 0
+                    ? _cachedUniverse.Take(_dayPickUniverseSize).ToList()
+                    : _cachedUniverse;
+
                 var picks = await _dayPickService.GenerateAsync(
-                    _cachedUniverse,
+                    pickUniverse,
                     readonlyHistory,
                     _cachedSummaries,
-                    _cachedNameLookup);
+                    _cachedNameLookup,
+                    _selectedDayPickStrategy);
 
                 // Persist so repeated calls today return the same list
                 _portfolioService.SaveDayPicksCache(targetDay, picks);
 
                 DayPicks.ReplaceAll(picks);
+                ((RelayCommand)AskAIAboutPicksCommand).RaiseCanExecuteChanged();
                 DayPicksStatus = picks.Count > 0
-                    ? $"{picks.Count} picks for {dayLabel}"
+                    ? $"{picks.Count} picks for {dayLabel}  [{_selectedDayPickStrategy}]"
                     : $"No picks found for {dayLabel}";
             }
             catch (Exception ex)
@@ -1675,6 +1735,50 @@ namespace StockPicker.ViewModels
         /// then opens the requested AI in the default browser.
         /// For Copilot the prompt is also injected via the ?q= URL parameter.
         /// </summary>
+        /// <summary>
+        /// Builds a batch prompt covering all current Daily Picks and opens the chosen AI.
+        /// The full list is copied to the clipboard; Copilot also gets it in the URL.
+        /// </summary>
+        private void AskAIAboutPicks()
+        {
+            if (DayPicks.Count == 0) return;
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Please review today's Daily Picks generated by my StockPicker app ({_selectedDayPickStrategy} strategy) and give me your assessment of each one.");
+            sb.AppendLine();
+            sb.AppendLine($"Trading session: {StockPicker.Services.TradingCalendar.FormatTradingDay(StockPicker.Services.TradingCalendar.TargetTradingDay())}");
+            sb.AppendLine();
+            sb.AppendLine("## Picks");
+
+            int i = 1;
+            foreach (var pick in DayPicks)
+            {
+                sb.AppendLine($"{i++}. **{pick.Symbol}** ({pick.CompanyName}) — {pick.DirectionDisplay}");
+                sb.AppendLine($"   Price: ${pick.LastPrice:F2} | Score: {pick.IntraDayScore:F2} | RSI: {pick.RSI14:F0}");
+                sb.AppendLine($"   Vol Ratio: {pick.VolumeRatio:F1}× | Gap: {pick.GapPct:+0.##;-0.##}% | ATR: {pick.AtrPct:F1}%");
+                sb.AppendLine($"   Entry: ${pick.EntryPrice:F2} | Stop: ${pick.StopLoss:F2} | Target: ${pick.Target:F2} (R:R {pick.RiskRewardRatio:F1})");
+                sb.AppendLine($"   Signals: {pick.TriggerReason}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("## Questions");
+            sb.AppendLine("1. Which of these picks has the highest conviction setup and why?");
+            sb.AppendLine("2. Are there any picks you would avoid? What are the risks?");
+            sb.AppendLine("3. Do you see any sector concentration or correlated risks across the list?");
+            sb.AppendLine("4. Given current market conditions, does the chosen strategy (") ;
+            sb.AppendLine($"   {_selectedDayPickStrategy}) seem appropriate?");
+            sb.AppendLine("5. Any adjustments to stop-loss or target levels you would suggest?");
+
+            var prompt = sb.ToString().Trim();
+            System.Windows.Clipboard.SetText(prompt);
+
+            var url = $"https://claude.ai/new";
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+
+            StatusMessage = $"Daily Picks batch prompt ({DayPicks.Count} stocks) copied to clipboard — paste into Claude!";
+        }
+
         private void AskAI(string ai)
         {
             // Resolve the best available data for the selected stock.

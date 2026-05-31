@@ -657,13 +657,28 @@
                 <TabItem Header="Daily Picks">
                     <DockPanel>
 
-                        <!-- Sub-header: status only (no amber, no refresh button) -->
+                        <!-- Sub-header: status + strategy selector -->
                         <Border DockPanel.Dock="Top"
                                 Background="#F5F5F5" BorderBrush="#DDD"
-                                BorderThickness="0,0,0,1" Padding="8,6">
-                            <TextBlock Text="{Binding DayPicksStatus}"
-                                       VerticalAlignment="Center"
-                                       Foreground="#555" FontStyle="Italic" />
+                                BorderThickness="0,0,0,1" Padding="8,5">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Text="Strategy:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                    <ComboBox ItemsSource="{Binding DayPickStrategyOptions}"
+                                              SelectedItem="{Binding SelectedDayPickStrategy}"
+                                              Width="120" FontSize="11" />
+                                    <TextBlock Text="Universe:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="10,0,4,0" FontSize="11" />
+                                    <ComboBox ItemsSource="{Binding DayPickUniverseSizeOptions}"
+                                              SelectedItem="{Binding DayPickUniverseSize}"
+                                              Width="60" FontSize="11"
+                                              ToolTip="Max stocks passed to the pick engine (0 = all from last scan)" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding DayPicksStatus}"
+                                           VerticalAlignment="Center"
+                                           Foreground="#555" FontStyle="Italic" />
+                            </DockPanel>
                         </Border>
 
                         <!-- Action buttons -->
@@ -680,8 +695,12 @@
                                     ToolTip="Record selected pick(s) as open positions" />
                             <Button Content="↺ Refresh"
                                     Command="{Binding ForceRefreshDayPicksCommand}"
-                                    Padding="10,4"
+                                    Padding="10,4" Margin="0,0,8,0"
                                     ToolTip="Bypass cache and regenerate picks from current data" />
+                            <Button Content="🤖 Ask AI about picks"
+                                    Command="{Binding AskAIAboutPicksCommand}"
+                                    Padding="10,4"
+                                    ToolTip="Build a batch analysis prompt for all current picks and open Claude" />
                         </StackPanel>
 
                         <!-- Disclaimer -->
@@ -1039,9 +1058,20 @@
                 <TabItem Header="Daily Picks">
                     <DockPanel>
                         <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
-                                BorderThickness="0,0,0,1" Padding="8,6">
-                            <TextBlock Text="{Binding DayPicksStatus}"
-                                       VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" />
+                                BorderThickness="0,0,0,1" Padding="6,4">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <ComboBox ItemsSource="{Binding DayPickStrategyOptions}"
+                                              SelectedItem="{Binding SelectedDayPickStrategy}"
+                                              Width="110" FontSize="10" />
+                                    <ComboBox ItemsSource="{Binding DayPickUniverseSizeOptions}"
+                                              SelectedItem="{Binding DayPickUniverseSize}"
+                                              Width="50" FontSize="10" Margin="4,0,0,0"
+                                              ToolTip="Daily Picks universe cap (0=all)" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding DayPicksStatus}"
+                                           VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" FontSize="10" />
+                            </DockPanel>
                         </Border>
                         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
                             <Button Content="Watch"
@@ -1051,11 +1081,15 @@
                             <Button Content="Position"
                                     Command="{Binding AddDayPickToHeldCommand}"
                                     CommandParameter="{Binding SelectedItems, ElementName=DayPicksGridCompact}"
-                                    Padding="8,4" Margin="0,0,8,0" />
-                            <Button Content="↺ Refresh"
+                                    Padding="8,4" Margin="0,0,6,0" />
+                            <Button Content="↺"
                                     Command="{Binding ForceRefreshDayPicksCommand}"
-                                    Padding="8,4"
-                                    ToolTip="Bypass cache and regenerate picks from current data" />
+                                    Padding="6,4" Margin="0,0,4,0"
+                                    ToolTip="Force refresh picks" />
+                            <Button Content="🤖 Ask AI"
+                                    Command="{Binding AskAIAboutPicksCommand}"
+                                    Padding="6,4"
+                                    ToolTip="Batch AI analysis of all current picks" />
                         </StackPanel>
                         <DataGrid x:Name="DayPicksGridCompact"
                                   ItemsSource="{Binding DayPicks}"

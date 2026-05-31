@@ -125,6 +125,22 @@
                         </Grid>
                         <TextBlock Text="Takes effect on the next scan / refresh." Style="{StaticResource SettingsNote}" />
 
+                        <!-- Daily Picks universe cap -->
+                        <TextBlock Text="Daily Picks" FontWeight="SemiBold" Margin="0,12,0,4" />
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Picks universe cap:" Style="{StaticResource SettingsLabel}" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding DayPickUniverseSizeOptions}"
+                                      SelectedItem="{Binding DayPickUniverseSize}"
+                                      ToolTip="Max stocks the Daily Picks engine evaluates. 0 = all stocks from the last scan." />
+                        </Grid>
+                        <TextBlock Text="0 = use all stocks from the last scan. Lower values are faster but may miss setups." Style="{StaticResource SettingsNote}" />
+
+                        <TextBlock Text="Scan" FontWeight="SemiBold" Margin="0,12,0,4" />
                         <Grid Margin="0,0,0,4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="170" />
