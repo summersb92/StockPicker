@@ -4,6 +4,7 @@ namespace StockPicker.Models
     {
         YahooFinance,
         Stooq,
+        Alpaca,
         AlphaVantage,
         Finnhub,
         Polygon,
@@ -16,6 +17,7 @@ namespace StockPicker.Models
         {
             DataSourceType.YahooFinance  => "Yahoo Finance",
             DataSourceType.Stooq         => "Stooq",
+            DataSourceType.Alpaca        => "Alpaca",
             DataSourceType.AlphaVantage  => "Alpha Vantage",
             DataSourceType.Finnhub       => "Finnhub",
             DataSourceType.Polygon       => "Polygon",
@@ -27,6 +29,7 @@ namespace StockPicker.Models
         {
             DataSourceType.YahooFinance  => "Yahoo",
             DataSourceType.Stooq         => "Stooq",
+            DataSourceType.Alpaca        => "Alpaca",
             DataSourceType.AlphaVantage  => "Alpha Vantage",
             DataSourceType.Finnhub       => "Finnhub",
             DataSourceType.Polygon       => "Polygon",

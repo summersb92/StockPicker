@@ -30,6 +30,8 @@ namespace StockPicker.Models
         // ── Scoring signals ───────────────────────────────────────────────────
         /// <summary>Composite intraday score (higher = stronger pick).</summary>
         public double  IntraDayScore { get; set; }
+        /// <summary>Normalized confidence derived from the composite intraday score.</summary>
+        public double  Confidence    { get; set; }
         /// <summary>Today's volume / 3-month average daily volume.</summary>
         public double  VolumeRatio   { get; set; }
         /// <summary>Opening gap % vs previous session close. Negative = gap-down.</summary>
@@ -40,6 +42,7 @@ namespace StockPicker.Models
         public double? RSI14         { get; set; }
 
         // ── Live data ─────────────────────────────────────────────────────────
+        public decimal? DayOpen      { get; set; }
         public decimal? LastPrice    { get; set; }
         public double?  DayChangePct { get; set; }
 
@@ -74,5 +77,6 @@ namespace StockPicker.Models
         public string RiskRewardDisplay   =>
             RiskRewardRatio.HasValue ? $"{RiskRewardRatio.Value:F1}:1" : "";
         public string ScoreDisplay        => $"{IntraDayScore:F1}";
+        public string ConfidenceDisplay   => $"{Confidence:P0}";
     }
 }

@@ -13,12 +13,14 @@ namespace StockPicker.ViewModels
             SourceType   = sourceType;
             DisplayName  = sourceType.DisplayName();
             RequiresApiKey = sourceType is not DataSourceType.YahooFinance
+                                            and not DataSourceType.Alpaca
                                             and not DataSourceType.Stooq;
 
             FreeInfo = sourceType switch
             {
                 DataSourceType.YahooFinance  => "No key required — unofficial API",
                 DataSourceType.Stooq         => "No key required — CSV download, 10+ years history",
+                DataSourceType.Alpaca        => "Uses ALPACA_API_KEY + ALPACA_API_SECRET from Windows environment variables",
                 DataSourceType.AlphaVantage  => "25 req/day free (5 req/min) — history only at scale",
                 DataSourceType.Finnhub       => "60 req/min free — good for live quotes & fundamentals",
                 DataSourceType.Polygon       => "5 calls/min free (delayed) — best as history backup",
@@ -30,6 +32,7 @@ namespace StockPicker.ViewModels
             {
                 DataSourceType.YahooFinance  => "",
                 DataSourceType.Stooq         => "",
+                DataSourceType.Alpaca        => "https://alpaca.markets/",
                 DataSourceType.AlphaVantage  => "https://www.alphavantage.co/support/#api-key",
                 DataSourceType.Finnhub       => "https://finnhub.io/register",
                 DataSourceType.Polygon       => "https://polygon.io/dashboard/signup",
@@ -44,7 +47,7 @@ namespace StockPicker.ViewModels
         /// <summary>Human-readable name, e.g. "Alpha Vantage".</summary>
         public string DisplayName { get; }
 
-        /// <summary>True for every source except Yahoo Finance.</summary>
+        /// <summary>True when this source uses the single API-key textbox in Settings.</summary>
         public bool RequiresApiKey { get; }
 
         /// <summary>Short note about the free-tier rate limits.</summary>

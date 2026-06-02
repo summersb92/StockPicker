@@ -21,5 +21,26 @@ namespace StockPicker.Models
 
         /// <summary>Human-readable signals the analysis flagged (e.g. "Above 50-day SMA").</summary>
         public List<string> Signals { get; } = new();
+
+        /// <summary>
+        /// Empirical probability that a setup similar to the current one reached the
+        /// configured target gain within the strategy's holding window.
+        /// </summary>
+        public double? TargetHitProbability { get; set; }
+
+        /// <summary>
+        /// Average number of trading days it took winning analogs to reach the target.
+        /// </summary>
+        public double? ExpectedDaysToTarget { get; set; }
+
+        /// <summary>
+        /// Median number of trading days it took winning analogs to reach the target.
+        /// </summary>
+        public double? MedianDaysToTarget { get; set; }
+
+        /// <summary>
+        /// Number of historical analog setups used to estimate the target stats.
+        /// </summary>
+        public int? TargetHitSampleSize { get; set; }
     }
 }

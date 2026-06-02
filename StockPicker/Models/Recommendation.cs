@@ -56,6 +56,10 @@ namespace StockPicker.Models
         // ── Strategy target ───────────────────────────────────────────────────
         public decimal? TargetPrice   { get; set; }
         public DateTime GeneratedAt   { get; set; } = DateTime.Now;
+        public double?  TargetHitProbability { get; set; }
+        public double?  ExpectedDaysToTarget { get; set; }
+        public double?  MedianDaysToTarget   { get; set; }
+        public int?     TargetHitSampleSize  { get; set; }
 
         // ── Analysis indicators (from AnalysisService) ────────────────────────
         public double?  RSI14          { get; set; }
@@ -69,6 +73,7 @@ namespace StockPicker.Models
         public decimal? StopLoss       { get; set; }   // suggested stop-loss level
 
         // ── Live market data (from Yahoo Finance quote) ───────────────────────
+        public decimal? DayOpen         { get; set; }   // session open price
         public decimal? LastPrice       { get; set; }   // regularMarketPrice
         public decimal? DayChange       { get; set; }   // $ change today
         public double?  DayChangePct    { get; set; }   // % change today
@@ -175,6 +180,14 @@ namespace StockPicker.Models
         public string VolumeDisplay    => FormatLarge(Volume);
         public string AvgVolumeDisplay => FormatLarge(AvgVolume);
         public string MarketCapDisplay => FormatMarketCap(MarketCap);
+        public string TargetHitProbabilityDisplay =>
+            TargetHitProbability.HasValue ? $"{TargetHitProbability.Value * 100:F0}%" : "";
+        public string ExpectedDaysToTargetDisplay =>
+            ExpectedDaysToTarget.HasValue ? $"{ExpectedDaysToTarget.Value:F1} d" : "";
+        public string MedianDaysToTargetDisplay =>
+            MedianDaysToTarget.HasValue ? $"{MedianDaysToTarget.Value:F1} d" : "";
+        public string TargetHitSampleSizeDisplay =>
+            TargetHitSampleSize.HasValue && TargetHitSampleSize.Value > 0 ? TargetHitSampleSize.Value.ToString() : "";
 
         private static string FormatLarge(long? value)
         {

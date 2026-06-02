@@ -80,7 +80,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <TextBlock Text="Yahoo Finance requires no key. For others, enter your API key above."
+                        <TextBlock Text="Yahoo Finance and Alpaca require no entry here. Other keyed sources use the API key box above; Alpaca reads ALPACA_API_KEY and ALPACA_API_SECRET from Windows environment variables."
                                    Style="{StaticResource SettingsNote}" />
                     </StackPanel>
                 </ScrollViewer>

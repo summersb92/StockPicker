@@ -148,9 +148,10 @@ actual fill price and share count.
 ## Getting Started
 
 1. Open `StockPicker.sln` in Visual Studio 2022 (17.8+) with the .NET 8 SDK.
-2. Run (F5). Pick a strategy, set a target %, click **Scan This Week**.
-3. In the Recommendations tab, click "Add to Watch" or "Mark as Held" on any
+2. Optional: enable **Alpaca** in Settings if `ALPACA_API_KEY` and `ALPACA_API_SECRET` are already set as Windows environment variables.
+3. Run (F5). Pick a strategy, set a target %, click **Scan This Week**.
+4. In the Recommendations tab, click "Add to Watch" or "Mark as Held" on any
    pick.
-4. Switch tabs to see your Watch / Held lists; the Details pane follows
+5. Switch tabs to see your Watch / Held lists; the Details pane follows
    whichever item you click last.
-5. Resize below ~1100px to see Compact mode kick in.
+6. Resize below ~1100px to see Compact mode kick in.

@@ -30,12 +30,26 @@ namespace StockPicker.Services
             IReadOnlyList<StockQuote> history,
             ScanContext context)
         {
-            var result = new AnalysisResult { Symbol = stock.Symbol };
+            var result = AnalyzeCore(stock.Symbol, history, context);
+
+            if (history.Count == 0)
+                return Task.FromResult(result);
+
+            AppendTargetEstimate(result, stock.Symbol, history, context);
+            return Task.FromResult(result);
+        }
+
+        private static AnalysisResult AnalyzeCore(
+            string symbol,
+            IReadOnlyList<StockQuote> history,
+            ScanContext context)
+        {
+            var result = new AnalysisResult { Symbol = symbol };
 
             if (history.Count == 0)
             {
                 result.Signals.Add("No price history available — check data feed.");
-                return Task.FromResult(result);
+                return result;
             }
 
             // ── Compute shared indicators ─────────────────────────────────────────
@@ -70,7 +84,7 @@ namespace StockPicker.Services
                 _                => ScoreMomentum(weekReturn, sma20, sma50, rsi14, volTrend, result),
             };
 
-            return Task.FromResult(result);
+            return result;
         }
 
         // ── Strategy scorers ──────────────────────────────────────────────────────
@@ -345,6 +359,136 @@ namespace StockPicker.Services
             double baseline = volumes.Skip(volumes.Length - baselineDays) .Average();
 
             return baseline == 0 ? 1.0 : recent / baseline;
+        }
+
+        private static void AppendTargetEstimate(
+            AnalysisResult result,
+            string symbol,
+            IReadOnlyList<StockQuote> history,
+            ScanContext context)
+        {
+            if (context.TargetProfitMarginPercent <= 0m || history.Count < 45)
+                return;
+
+            var currentBucket = SignalBucket(result.Score);
+            if (currentBucket == 0)
+                return;
+
+            if (!result.Indicators.TryGetValue("RSI14", out var currentRsi) ||
+                !result.Indicators.TryGetValue("WeekReturn%", out var currentWeekReturn) ||
+                !result.Indicators.TryGetValue("VolumeTrend", out var currentVolTrend))
+                return;
+
+            var horizon = EstimateHorizon(context.Strategy.HoldingPeriod);
+            var maxEndIndex = history.Count - horizon - 1;
+            if (maxEndIndex < 20)
+                return;
+
+            var analogs = new List<(double Distance, int? HitDays)>();
+            var step = maxEndIndex - 19 > 40 ? 2 : 1;
+            for (int endIndex = 19; endIndex <= maxEndIndex; endIndex += step)
+            {
+                var candidateHistory = history.Take(endIndex + 1).ToList();
+                var candidate = AnalyzeCore(symbol, candidateHistory, context);
+                if (!candidate.Indicators.TryGetValue("RSI14", out var candidateRsi) ||
+                    !candidate.Indicators.TryGetValue("WeekReturn%", out var candidateWeekReturn) ||
+                    !candidate.Indicators.TryGetValue("VolumeTrend", out var candidateVolTrend))
+                    continue;
+
+                var distance = Math.Abs(candidate.Score - result.Score) / 1.25
+                    + Math.Abs(candidateRsi - currentRsi) / 12.0
+                    + Math.Abs(candidateWeekReturn - currentWeekReturn) / 4.0
+                    + Math.Abs(candidateVolTrend - currentVolTrend) / 0.6;
+
+                if (candidate.Indicators.TryGetValue("PctFromSMA20", out var candidatePctFromSma20) &&
+                    result.Indicators.TryGetValue("PctFromSMA20", out var currentPctFromSma20))
+                {
+                    distance += Math.Abs(candidatePctFromSma20 - currentPctFromSma20) / 4.0;
+                }
+
+                if (candidate.Indicators.TryGetValue("PctFrom90DHigh", out var candidatePctFromHigh) &&
+                    result.Indicators.TryGetValue("PctFrom90DHigh", out var currentPctFromHigh))
+                {
+                    distance += Math.Abs(candidatePctFromHigh - currentPctFromHigh) / 4.0;
+                }
+
+                if (SignalBucket(candidate.Score) != currentBucket)
+                    distance += 1.5;
+
+                analogs.Add((distance, FindHitDays(history, endIndex, horizon, currentBucket, (double)context.TargetProfitMarginPercent)));
+            }
+
+            const int minSample = 8;
+            const int maxSample = 24;
+
+            var sample = analogs
+                .OrderBy(a => a.Distance)
+                .Take(maxSample)
+                .ToList();
+
+            if (sample.Count < minSample)
+                return;
+
+            var hitDays = sample
+                .Where(a => a.HitDays.HasValue)
+                .Select(a => a.HitDays!.Value)
+                .OrderBy(d => d)
+                .ToList();
+
+            result.TargetHitSampleSize = sample.Count;
+            result.TargetHitProbability = (double)hitDays.Count / sample.Count;
+
+            if (hitDays.Count == 0)
+                return;
+
+            result.ExpectedDaysToTarget = Math.Round(hitDays.Average(), 1);
+            result.MedianDaysToTarget = hitDays.Count % 2 == 1
+                ? hitDays[hitDays.Count / 2]
+                : Math.Round((hitDays[hitDays.Count / 2 - 1] + hitDays[hitDays.Count / 2]) / 2.0, 1);
+        }
+
+        private static int SignalBucket(double score) => score switch
+        {
+            >= 2.0 => 2,
+            >= 0.5 => 1,
+            <= -2.0 => -2,
+            <= -0.5 => -1,
+            _ => 0,
+        };
+
+        private static int EstimateHorizon(HoldingPeriod period) => period switch
+        {
+            HoldingPeriod.Quick => 5,
+            HoldingPeriod.Short => 20,
+            HoldingPeriod.Long => 40,
+            _ => 20,
+        };
+
+        private static int? FindHitDays(
+            IReadOnlyList<StockQuote> history,
+            int endIndex,
+            int horizon,
+            int signalBucket,
+            double targetPercent)
+        {
+            var entry = (double)history[endIndex].Close;
+            if (entry <= 0)
+                return null;
+
+            bool isLong = signalBucket > 0;
+            var targetMultiplier = isLong ? 1.0 + (targetPercent / 100.0) : 1.0 - (targetPercent / 100.0);
+            var targetPrice = entry * targetMultiplier;
+
+            for (int offset = 1; offset <= horizon; offset++)
+            {
+                var future = history[endIndex + offset];
+                if (isLong && (double)future.High >= targetPrice)
+                    return offset;
+                if (!isLong && (double)future.Low <= targetPrice)
+                    return offset;
+            }
+
+            return null;
         }
     }
 }

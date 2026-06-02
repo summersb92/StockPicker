@@ -177,6 +177,7 @@
                     <Separator Margin="0,10" />
                     <TextBlock Text="Live Market Data" FontWeight="SemiBold" />
                     <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="{Binding DayOpen,            StringFormat='Open: ${0:F2}  ',      FallbackValue=''}" />
                         <TextBlock Text="{Binding LastPrice,          StringFormat='Price: ${0:F2}  ',     FallbackValue=''}" />
                         <TextBlock Text="{Binding DayChangeDisplay,   StringFormat='{}Change: {0}  ',      FallbackValue=''}" />
                         <TextBlock Text="{Binding DayChangePctDisplay,StringFormat='{}({0})  ',            FallbackValue=''}" />
@@ -229,6 +230,13 @@
                     <!-- Target price -->
                     <Separator Margin="0,10" />
                     <TextBlock Text="{Binding TargetPrice, StringFormat='Target price: ${0:F2}', FallbackValue=''}" />
+                    <TextBlock Text="{Binding TargetHitProbabilityDisplay, StringFormat='Target hit probability: {0}', FallbackValue=''}"
+                               Margin="0,2,0,0" />
+                    <WrapPanel Margin="0,2,0,0">
+                        <TextBlock Text="{Binding ExpectedDaysToTargetDisplay, StringFormat='Avg days to hit: {0}  ', FallbackValue=''}" />
+                        <TextBlock Text="{Binding MedianDaysToTargetDisplay,   StringFormat='Median: {0}  ',         FallbackValue=''}" />
+                        <TextBlock Text="{Binding TargetHitSampleSizeDisplay,  StringFormat='Analogs: {0}',          FallbackValue=''}" />
+                    </WrapPanel>
                     <TextBlock Text="{Binding EntryPrice,  StringFormat='Entry price: ${0:F2}',  FallbackValue=''}" Margin="0,2,0,0" />
                     <TextBlock Text="{Binding ShareCount,  StringFormat='Shares: {0}',           FallbackValue=''}" Margin="0,2,0,0" />
                     <TextBlock Text="{Binding GeneratedAt, StringFormat='Generated: {0:g}',      FallbackValue=''}" Margin="0,4,0,0" Foreground="#666" />
@@ -977,6 +985,8 @@
                                 </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Direction" Binding="{Binding DirectionDisplay}" Width="80" />
                                 <DataGridTextColumn Header="Score" Binding="{Binding ScoreDisplay}" Width="56" SortMemberPath="IntraDayScore" />
+                                <DataGridTextColumn Header="Conf." Binding="{Binding ConfidenceDisplay}" Width="58" SortMemberPath="Confidence" />
+                                <DataGridTextColumn Header="Open" Binding="{Binding DayOpen, StringFormat={}{0:F2}}" Width="68" />
                                 <DataGridTextColumn Header="Price" Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="68" />
                                 <DataGridTextColumn Header="Day Chg%" Binding="{Binding DayChangePctDisplay}" Width="72" />
                                 <DataGridTextColumn Header="Vol Ratio" Binding="{Binding VolumeRatioDisplay}" Width="72" SortMemberPath="VolumeRatio" />
@@ -1602,6 +1612,8 @@
                                 <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}"              Width="64" />
                                 <DataGridTextColumn Header="Dir"    Binding="{Binding DirectionDisplay}"    Width="50" />
                                 <DataGridTextColumn Header="Score"  Binding="{Binding ScoreDisplay}"        Width="50" SortMemberPath="IntraDayScore" />
+                                <DataGridTextColumn Header="Conf"   Binding="{Binding ConfidenceDisplay}"   Width="54" SortMemberPath="Confidence" />
+                                <DataGridTextColumn Header="Open"   Binding="{Binding DayOpen, StringFormat={}{0:F2}}" Width="60" />
                                 <DataGridTextColumn Header="$"      Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="60" />
                                 <DataGridTextColumn Header="Chg%"   Binding="{Binding DayChangePctDisplay}" Width="60" />
                                 <DataGridTextColumn Header="R:R"    Binding="{Binding RiskRewardDisplay}"   Width="48" SortMemberPath="RiskRewardRatio" />

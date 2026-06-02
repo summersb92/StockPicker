@@ -49,7 +49,8 @@ namespace StockPicker.ViewModels
 
         /// <summary>
         /// Index symbols and their display names.
-        /// Yahoo Finance serves these the same as regular equity quotes.
+        /// These are fetched via Yahoo because Alpaca's stock endpoints do not
+        /// serve caret-prefixed index symbols like ^GSPC.
         /// </summary>
         private static readonly (string Symbol, string Name)[] _indexSymbols =
         {
@@ -72,6 +73,7 @@ namespace StockPicker.ViewModels
         private Dictionary<DataSourceType, Dictionary<string, IReadOnlyList<StockQuote>>> _cachedHistoryPerSource = new();
         // Which sources contributed data for each symbol (after merge)
         private Dictionary<string, List<DataSourceType>> _cachedSourcesBySymbol = new();
+        private DataSourceType? _cachedPrimaryQuoteSource;
 
         // ── Auto-refresh timer ────────────────────────────────────────────────
         private readonly DispatcherTimer _refreshTimer;
@@ -247,11 +249,12 @@ namespace StockPicker.ViewModels
             // ── Data source toggles ──────────────────────────────────────────────
             var yahoo  = new DataSourceToggle(DataSourceType.YahooFinance);
             var stooq  = new DataSourceToggle(DataSourceType.Stooq);
+            var alpaca = new DataSourceToggle(DataSourceType.Alpaca);
             var av     = new DataSourceToggle(DataSourceType.AlphaVantage);
             var fh     = new DataSourceToggle(DataSourceType.Finnhub);
             var poly   = new DataSourceToggle(DataSourceType.Polygon);
             var tiingo = new DataSourceToggle(DataSourceType.Tiingo);
-            DataSources = new[] { yahoo, stooq, av, fh, poly, tiingo };
+            DataSources = new[] { yahoo, stooq, alpaca, av, fh, poly, tiingo };
 
             // Restore enabled state and API keys from settings
             foreach (var ds in DataSources)
@@ -1183,9 +1186,10 @@ namespace StockPicker.ViewModels
             // loaded from disk in the constructor).
             _ = RefreshPerformanceAsync();
 
+            var configuredServices = GetConfiguredServices();
             var diskCache = await _scanCacheService.LoadAsync();
 
-            if (diskCache != null)
+            if (diskCache != null && IsCacheCompatible(diskCache, configuredServices))
             {
                 // Restore in-memory state from the persisted snapshot.
                 _cachedUniverse  = diskCache.Universe;
@@ -1227,6 +1231,7 @@ namespace StockPicker.ViewModels
 
                 // Show results immediately — no network call needed.
                 await ApplyStrategyAsync(isScan: false);
+                await GenerateDayPicksAsync();
 
                 // Always refresh on startup if the cache is older than 15 minutes,
                 // regardless of market hours — data may be stale from a previous session.
@@ -1246,6 +1251,11 @@ namespace StockPicker.ViewModels
                     StatusMessage = $"Showing cached data from {diskCache.FetchTime:HH:mm} — {when}.";
                     UpdateRefreshStatus();
                 }
+            }
+            else if (diskCache != null)
+            {
+                StatusMessage = "Data-source settings changed. Fetching fresh data…";
+                await RunWeeklyScanAsync();
             }
             else
             {
@@ -1275,8 +1285,9 @@ namespace StockPicker.ViewModels
 
         /// <summary>
         /// Builds an IStockDataService instance for the given toggle.
-        /// Returns null if the toggle has no API key set (silently skipped).
-        /// Yahoo Finance always returns the shared _dataService instance.
+        /// Returns null if the toggle is not fully configured.
+        /// Yahoo Finance always returns the shared _dataService instance; Alpaca
+        /// uses ALPACA_API_KEY and ALPACA_API_SECRET from the environment.
         /// </summary>
         private IStockDataService? BuildServiceForSource(DataSourceToggle ds)
         {
@@ -1284,6 +1295,8 @@ namespace StockPicker.ViewModels
             {
                 DataSourceType.YahooFinance => _dataService,
                 DataSourceType.Stooq        => new StooqStockDataService(),
+                DataSourceType.Alpaca       => AlpacaStockDataService.HasEnvironmentCredentials()
+                    ? new AlpacaStockDataService() : null,
                 DataSourceType.AlphaVantage => string.IsNullOrWhiteSpace(ds.ApiKey)
                     ? null : new AlphaVantageStockDataService(ds.ApiKey),
                 DataSourceType.Finnhub      => string.IsNullOrWhiteSpace(ds.ApiKey)
@@ -1294,6 +1307,51 @@ namespace StockPicker.ViewModels
                     ? null : new TiingoStockDataService(ds.ApiKey),
                 _                           => null
             };
+        }
+
+        /// <summary>
+        /// Choose the primary quote source for equities, preferring Alpaca when it is
+        /// enabled and configured, then Yahoo Finance, then the first remaining source.
+        /// </summary>
+        private static IStockDataService SelectPrimaryQuoteService(IReadOnlyList<IStockDataService> services)
+        {
+            return services.FirstOrDefault(s => s.SourceType == DataSourceType.Alpaca)
+                ?? services.FirstOrDefault(s => s.SourceType == DataSourceType.YahooFinance)
+                ?? services.First();
+        }
+
+        private List<IStockDataService> GetConfiguredServices()
+        {
+            var services = DataSources
+                .Where(d => d.IsEnabled)
+                .Select(BuildServiceForSource)
+                .Where(svc => svc != null)
+                .Select(svc => svc!)
+                .ToList();
+
+            if (services.Count == 0)
+                services.Add(_dataService);
+
+            return services;
+        }
+
+        private bool IsCacheCompatible(ScanCache cache, IReadOnlyList<IStockDataService> configuredServices)
+        {
+            var cachedSources = cache.EnabledSources
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .OrderBy(s => s, StringComparer.Ordinal)
+                .ToArray();
+
+            var currentSources = configuredServices
+                .Select(s => s.SourceType.ToString())
+                .OrderBy(s => s, StringComparer.Ordinal)
+                .ToArray();
+
+            if (!cachedSources.SequenceEqual(currentSources, StringComparer.Ordinal))
+                return false;
+
+            var currentPrimary = SelectPrimaryQuoteService(configuredServices).SourceType.ToString();
+            return string.Equals(cache.PrimaryQuoteSource, currentPrimary, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1379,18 +1437,7 @@ namespace StockPicker.ViewModels
                 _cachedWeekEnd   = today;
 
                 // ── Determine which services are active ────────────────────────
-                var enabledToggles = DataSources.Where(d => d.IsEnabled).ToList();
-                var services = enabledToggles
-                    .Select(ds => BuildServiceForSource(ds))
-                    .Where(svc => svc != null)
-                    .Select(svc => svc!)
-                    .ToList();
-
-                if (services.Count == 0)
-                {
-                    // Fallback: always use Yahoo
-                    services.Add(_dataService);
-                }
+                var services = GetConfiguredServices();
 
                 var sourceNames = string.Join(", ", services.Select(s => s.SourceType.ShortName()));
                 StatusMessage = $"Connecting to {sourceNames}…";
@@ -1452,13 +1499,16 @@ namespace StockPicker.ViewModels
                 // ── Merge histories from all sources ──────────────────────────
                 _cachedHistory = MergeHistories(_cachedHistoryPerSource);
 
-                // ── 1c. Live quote summaries — Yahoo is primary ────────────────
-                StatusMessage    = $"Fetching live market data for {total} stocks…";
-                _cachedSummaries = await _dataService.GetQuoteSummariesAsync(
-                                       _cachedUniverse.Select(s => s.Symbol));
+                // ── 1c. Live quote summaries — Alpaca preferred when enabled ───
+                var primaryQuoteService = SelectPrimaryQuoteService(services);
+                _cachedPrimaryQuoteSource = primaryQuoteService.SourceType;
+                StatusMessage = $"Fetching live market data from {primaryQuoteService.SourceType.ShortName()} for {total} stocks…";
+                _cachedSummaries = await primaryQuoteService.GetQuoteSummariesAsync(
+                    _cachedUniverse.Select(s => s.Symbol));
 
-                // Supplement with data from secondary sources for any symbols Yahoo missed.
-                foreach (var svc in services.Where(s => s.SourceType != DataSourceType.YahooFinance))
+                // Supplement with data from remaining sources for any symbols the
+                // primary quote service missed.
+                foreach (var svc in services.Where(s => s.SourceType != primaryQuoteService.SourceType))
                 {
                     try
                     {
@@ -1593,6 +1643,11 @@ namespace StockPicker.ViewModels
                 SourcesBySymbol = _cachedSourcesBySymbol.ToDictionary(
                     kv => kv.Key,
                     kv => kv.Value.Select(s => s.ToString()).ToList()),
+                EnabledSources = _cachedHistoryPerSource.Keys
+                    .Select(s => s.ToString())
+                    .OrderBy(s => s, StringComparer.Ordinal)
+                    .ToList(),
+                PrimaryQuoteSource = _cachedPrimaryQuoteSource?.ToString() ?? string.Empty,
             };
 
             await _scanCacheService.SaveAsync(cache);
@@ -1651,6 +1706,7 @@ namespace StockPicker.ViewModels
                         rec.Sector = qs.Sector ?? "";
 
                     // Live market data
+                    rec.DayOpen          = qs.DayOpen;
                     rec.LastPrice        = qs.Price;
                     rec.DayChange        = qs.DayChange;
                     rec.DayChangePct     = qs.DayChangePct;
