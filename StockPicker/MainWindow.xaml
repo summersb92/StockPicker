@@ -38,6 +38,50 @@
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
 
+        <!-- ── Scrollable-header TabControl ─────────────────────────────────
+             Default WPF TabControls wrap overflowing tab headers onto extra
+             rows (and otherwise clip them) with no way to scroll. When the
+             Details panel is expanded it squeezes the tab column, so the tab
+             strip can overflow. This template hosts the header TabPanel inside
+             a horizontal ScrollViewer, giving a draggable left↔right scrollbar
+             that keeps every tab reachable. -->
+        <Style x:Key="ScrollableHeaderTabControl" TargetType="TabControl">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local"
+                              SnapsToDevicePixels="True">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Scrollable tab-header strip -->
+                            <ScrollViewer Grid.Row="0"
+                                          HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          Focusable="False" Padding="0">
+                                <TabPanel IsItemsHost="True"
+                                          Panel.ZIndex="1"
+                                          KeyboardNavigation.TabIndex="1" />
+                            </ScrollViewer>
+
+                            <!-- Selected tab content -->
+                            <Border Grid.Row="1"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  ContentSource="SelectedContent"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ── Row color style (shared by both layouts) ─────────────────── -->
         <!-- Shared context menu for any DataGrid row that has a Symbol property -->
         <ContextMenu x:Key="RowContextMenu">
@@ -379,7 +423,7 @@
                 <ColumnDefinition Width="2*" MinWidth="0" />
             </Grid.ColumnDefinitions>
 
-            <TabControl Grid.Column="0">
+            <TabControl Grid.Column="0" Style="{StaticResource ScrollableHeaderTabControl}">
                 <!-- ===== Recommendations tab ===== -->
                 <TabItem Header="Recommendations">
                     <DockPanel>
@@ -772,9 +816,198 @@
                                 <DataGridTextColumn Header="Stop" Binding="{Binding StopLoss, StringFormat={}{0:F2}}" Width="64" />
                                 <DataGridTextColumn Header="Target" Binding="{Binding Target, StringFormat={}{0:F2}}" Width="64" />
                                 <DataGridTextColumn Header="R:R" Binding="{Binding RiskRewardDisplay}" Width="50" SortMemberPath="RiskRewardRatio" />
-                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}" Width="*" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}" Width="*" MinWidth="260" />
                             </DataGrid.Columns>
                         </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ===== Earnings tab ===== -->
+                <TabItem Header="Earnings">
+                    <DockPanel>
+
+                        <!-- Sub-header: window + target % + margin controls + status -->
+                        <Border DockPanel.Dock="Top"
+                                Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="8,5">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Text="Within:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                    <ComboBox ItemsSource="{Binding EarningsWindowOptions}"
+                                              SelectedItem="{Binding EarningsWindowDays}"
+                                              Width="56" FontSize="11"
+                                              ToolTip="Show stocks with earnings within this many days" />
+                                    <TextBlock Text="days" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="3,0,12,0" FontSize="11" />
+
+                                    <TextBlock Text="Target ▲:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                    <TextBox Text="{Binding EarningsTargetUpPercent, StringFormat={}{0:0.#}, UpdateSourceTrigger=LostFocus}"
+                                             Width="44" FontSize="11" VerticalContentAlignment="Center"
+                                             ToolTip="Upside % the likelihood flag is measured against" />
+                                    <TextBlock Text="%" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="2,0,12,0" FontSize="11" />
+
+                                    <CheckBox Content="Buy on margin"
+                                              IsChecked="{Binding EarningsUseMargin}"
+                                              VerticalAlignment="Center" FontSize="11"
+                                              ToolTip="Recompute returns assuming leverage and margin interest" />
+                                    <Slider Minimum="10" Maximum="100"
+                                            Value="{Binding EarningsMarginPercent}"
+                                            Width="90" Margin="6,0,4,0" VerticalAlignment="Center"
+                                            TickFrequency="5" IsSnapToTickEnabled="True"
+                                            IsEnabled="{Binding EarningsUseMargin}"
+                                            ToolTip="Equity margin requirement % (lower = more leverage)" />
+                                    <TextBlock Text="{Binding EarningsLeverageDisplay}"
+                                               VerticalAlignment="Center" FontSize="11"
+                                               Foreground="#555" Margin="0,0,10,0" MinWidth="78" />
+                                    <TextBlock Text="Rate:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                    <TextBox Text="{Binding EarningsMarginRatePct, StringFormat={}{0:0.##}, UpdateSourceTrigger=LostFocus}"
+                                             Width="44" FontSize="11" VerticalContentAlignment="Center"
+                                             IsEnabled="{Binding EarningsUseMargin}"
+                                             ToolTip="Annualized margin interest rate %" />
+                                    <TextBlock Text="%" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="2,0,0,0" FontSize="11" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding EarningsStatus}"
+                                           VerticalAlignment="Center"
+                                           Foreground="#555" FontStyle="Italic" />
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Action buttons -->
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Add to Watch"
+                                    Command="{Binding AddEarningsToWatchCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=EarningsGridFull}"
+                                    Padding="10,4" Margin="0,0,6,0"
+                                    ToolTip="Track selected stock(s) on your Watch list" />
+                            <Button Content="Add to Positions"
+                                    Command="{Binding AddEarningsToHeldCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=EarningsGridFull}"
+                                    Padding="10,4" Margin="0,0,12,0"
+                                    ToolTip="Record selected stock(s) as open positions" />
+                            <Button Content="↺ Refresh"
+                                    Command="{Binding ForceRefreshEarningsCommand}"
+                                    Padding="10,4"
+                                    ToolTip="Re-scan the universe for upcoming earnings" />
+                        </StackPanel>
+
+                        <!-- Disclaimer -->
+                        <TextBlock DockPanel.Dock="Bottom"
+                                   Text="&#x26A0; The likelihood score is a heuristic estimate from implied volatility and momentum &#x2014; NOT a prediction or financial advice. Earnings trades carry significant risk; margin amplifies both gains and losses."
+                                   FontSize="10" Foreground="#999" Margin="6,4" TextWrapping="Wrap" />
+
+                        <!-- Earnings grid -->
+                        <DataGrid x:Name="EarningsGridFull"
+                                  ItemsSource="{Binding EarningsPicks}"
+                                  SelectedItem="{Binding SelectedEarningsPick}"
+                                  SelectionMode="Extended"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  AlternatingRowBackground="#FAFAFA"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  EnableColumnVirtualization="True">
+
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding MeetsThreshold}" Value="True">
+                                            <Setter Property="Background" Value="#E8F5E9" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                    <Setter Property="ToolTip">
+                                        <Setter.Value>
+                                            <ToolTip MaxWidth="360">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Symbol}" FontWeight="Bold" FontSize="13" />
+                                                    <TextBlock Text="{Binding CompanyName}" Foreground="#444" Margin="0,2,0,4" />
+                                                    <Separator />
+                                                    <TextBlock Text="{Binding TriggerReason}" TextWrapping="Wrap"
+                                                               Margin="0,6,0,0" FontStyle="Italic" />
+                                                    <Separator Margin="0,6" />
+                                                    <TextBlock Text="{Binding GeneratedAt, StringFormat='Generated: {0:HH:mm}'}"
+                                                               Foreground="#888" FontSize="10" />
+                                                </StackPanel>
+                                            </ToolTip>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </DataGrid.RowStyle>
+
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="2,1">
+                                                <TextBlock Text="{Binding Symbol}" FontWeight="SemiBold" FontSize="12" />
+                                                <TextBlock Text="{Binding CompanyName}" FontSize="9" Foreground="#666"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Earnings" Binding="{Binding EarningsDateDisplay}" Width="120" SortMemberPath="NextEarningsDate" />
+                                <DataGridTextColumn Header="Days" Binding="{Binding DaysUntilEarnings}" Width="50" SortMemberPath="DaysUntilEarnings" />
+                                <DataGridTextColumn Header="Price" Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="68" />
+                                <DataGridTextColumn Header="Day Chg%" Binding="{Binding DayChangePctDisplay}" Width="72" />
+                                <DataGridTextColumn Header="Impl. Move" Binding="{Binding ExpectedMoveDisplay}" Width="78" SortMemberPath="ExpectedMovePct" />
+                                <DataGridTextColumn Header="Score" Binding="{Binding ScoreDisplay}" Width="56" SortMemberPath="LikelihoodScore" />
+                                <DataGridTextColumn Header="Flag" Binding="{Binding FlagDisplay}" Width="80" SortMemberPath="MeetsThreshold" />
+                                <DataGridTextColumn Header="Momentum" Binding="{Binding MomentumDisplay}" Width="78" SortMemberPath="MomentumPct" />
+                                <DataGridTextColumn Header="Leverage" Binding="{Binding LeverageDisplay}" Width="68" SortMemberPath="Leverage" />
+                                <DataGridTextColumn Header="Interest" Binding="{Binding InterestCostDisplay}" Width="66" SortMemberPath="InterestCostPct" />
+                                <DataGridTextColumn Header="Net Ret%" Binding="{Binding NetMarginReturnDisplay}" Width="72" SortMemberPath="NetMarginReturnPct" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}" Width="*" MinWidth="260" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- ===== News tab ===== -->
+                <TabItem Header="News">
+                    <DockPanel>
+                        <!-- Sub-header: status -->
+                        <Border DockPanel.Dock="Top"
+                                Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="8,5">
+                            <TextBlock Text="{Binding NewsStatus}"
+                                       VerticalAlignment="Center"
+                                       Foreground="#555" FontStyle="Italic" />
+                        </Border>
+
+                        <!-- Action buttons -->
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="📋 Copy briefing"
+                                    Command="{Binding CopyNewsCommand}"
+                                    Padding="10,4" Margin="0,0,6,0"
+                                    ToolTip="Copy the full briefing to the clipboard for pasting into another LLM" />
+                            <Button Content="↻ Regenerate"
+                                    Command="{Binding RegenerateNewsCommand}"
+                                    Padding="10,4" Margin="0,0,12,0"
+                                    ToolTip="Rebuild the briefing from the current recommendations and settings" />
+                            <Button Content="🤖 Open in Claude"
+                                    Command="{Binding AskAINewsCommand}"
+                                    Padding="10,4"
+                                    ToolTip="Copy the briefing and open Claude in your browser" />
+                        </StackPanel>
+
+                        <!-- Disclaimer -->
+                        <TextBlock DockPanel.Dock="Bottom"
+                                   Text="&#x26A0; Algorithmic briefing only &#x2014; not financial advice. Intended as input for further LLM analysis; verify independently."
+                                   FontSize="10" Foreground="#999" Margin="6,4" TextWrapping="Wrap" />
+
+                        <!-- Briefing text (read-only, selectable) -->
+                        <TextBox Text="{Binding NewsReport, Mode=OneWay}"
+                                 IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                 TextWrapping="Wrap" AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas, Courier New" FontSize="12"
+                                 Background="White" BorderThickness="0" Padding="8"
+                                 VerticalContentAlignment="Top" />
                     </DockPanel>
                 </TabItem>
 
@@ -856,7 +1089,7 @@
                                     <DataGridTextColumn Header="Buy"       Binding="{Binding BuyDate,  StringFormat={}{0:MMM d}}" Width="60" />
                                     <DataGridTextColumn Header="Sell"      Binding="{Binding SellDate, StringFormat={}{0:MMM d}}" Width="60" />
                                     <DataGridTextColumn Header="Source"    Binding="{Binding SourceTag}"  Width="88" />
-                                    <DataGridTextColumn Header="Reasoning" Binding="{Binding Reasoning}" Width="*" />
+                                    <DataGridTextColumn Header="Reasoning" Binding="{Binding Reasoning}" Width="*" MinWidth="220" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </DockPanel>
@@ -917,7 +1150,7 @@
                                     <DataGridTextColumn Header="Gain $"       Binding="{Binding UnrealizedGainDisplay}"                      Width="76" />
                                     <DataGridTextColumn Header="Gain %"       Binding="{Binding UnrealizedGainPctDisplay}"                   Width="68" />
                                     <DataGridTextColumn Header="Hold"         Binding="{Binding HoldingPeriod}"                               Width="64" />
-                                    <DataGridTextColumn Header="Notes"        Binding="{Binding Notes}"                                       Width="*" />
+                                    <DataGridTextColumn Header="Notes"        Binding="{Binding Notes}"                                       Width="*" MinWidth="220" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </DockPanel>
@@ -977,7 +1210,7 @@
             </Grid.RowDefinitions>
 
             <!-- ── Top pane: tabs ── -->
-            <TabControl Grid.Row="0">
+            <TabControl Grid.Row="0" Style="{StaticResource ScrollableHeaderTabControl}">
 
                 <!-- Recommendations -->
                 <TabItem Header="Recommendations">
@@ -1117,9 +1350,112 @@
                                 <DataGridTextColumn Header="$"      Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="60" />
                                 <DataGridTextColumn Header="Chg%"   Binding="{Binding DayChangePctDisplay}" Width="60" />
                                 <DataGridTextColumn Header="R:R"    Binding="{Binding RiskRewardDisplay}"   Width="48" SortMemberPath="RiskRewardRatio" />
-                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}"      Width="*" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}"      Width="*" MinWidth="220" />
                             </DataGrid.Columns>
                         </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- Earnings -->
+                <TabItem Header="Earnings">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="6,4">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <ComboBox ItemsSource="{Binding EarningsWindowOptions}"
+                                              SelectedItem="{Binding EarningsWindowDays}"
+                                              Width="50" FontSize="10"
+                                              ToolTip="Earnings within N days" />
+                                    <TextBlock Text="▲" VerticalAlignment="Center" Foreground="#555" Margin="6,0,2,0" FontSize="10" />
+                                    <TextBox Text="{Binding EarningsTargetUpPercent, StringFormat={}{0:0.#}, UpdateSourceTrigger=LostFocus}"
+                                             Width="36" FontSize="10" VerticalContentAlignment="Center"
+                                             ToolTip="Target upside %" />
+                                    <CheckBox Content="Margin" IsChecked="{Binding EarningsUseMargin}"
+                                              VerticalAlignment="Center" FontSize="10" Margin="6,0,0,0"
+                                              ToolTip="Buy on margin (12.5% default rate)" />
+                                    <Slider Minimum="10" Maximum="100" Value="{Binding EarningsMarginPercent}"
+                                            Width="70" Margin="4,0,0,0" VerticalAlignment="Center"
+                                            TickFrequency="5" IsSnapToTickEnabled="True"
+                                            IsEnabled="{Binding EarningsUseMargin}"
+                                            ToolTip="Margin requirement % (lower = more leverage)" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding EarningsStatus}"
+                                           VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" FontSize="10" />
+                            </DockPanel>
+                        </Border>
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="Watch"
+                                    Command="{Binding AddEarningsToWatchCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=EarningsGridCompact}"
+                                    Padding="8,4" Margin="0,0,4,0" />
+                            <Button Content="Position"
+                                    Command="{Binding AddEarningsToHeldCommand}"
+                                    CommandParameter="{Binding SelectedItems, ElementName=EarningsGridCompact}"
+                                    Padding="8,4" Margin="0,0,6,0" />
+                            <Button Content="↺"
+                                    Command="{Binding ForceRefreshEarningsCommand}"
+                                    Padding="6,4"
+                                    ToolTip="Re-scan for upcoming earnings" />
+                        </StackPanel>
+                        <DataGrid x:Name="EarningsGridCompact"
+                                  ItemsSource="{Binding EarningsPicks}"
+                                  SelectedItem="{Binding SelectedEarningsPick}"
+                                  SelectionMode="Extended"
+                                  AutoGenerateColumns="False" IsReadOnly="True"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  AlternatingRowBackground="#FAFAFA">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding MeetsThreshold}" Value="True">
+                                            <Setter Property="Background" Value="#E8F5E9" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Symbol"  Binding="{Binding Symbol}"               Width="64" />
+                                <DataGridTextColumn Header="Earnings" Binding="{Binding EarningsDateDisplay}"  Width="106" SortMemberPath="NextEarningsDate" />
+                                <DataGridTextColumn Header="Move"    Binding="{Binding ExpectedMoveDisplay}"   Width="64" SortMemberPath="ExpectedMovePct" />
+                                <DataGridTextColumn Header="Score"   Binding="{Binding ScoreDisplay}"          Width="50" SortMemberPath="LikelihoodScore" />
+                                <DataGridTextColumn Header="Flag"    Binding="{Binding FlagDisplay}"           Width="72" SortMemberPath="MeetsThreshold" />
+                                <DataGridTextColumn Header="Net%"    Binding="{Binding NetMarginReturnDisplay}" Width="60" SortMemberPath="NetMarginReturnPct" />
+                                <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}"         Width="*" MinWidth="220" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </TabItem>
+
+                <!-- News -->
+                <TabItem Header="News">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                                BorderThickness="0,0,0,1" Padding="6,4">
+                            <TextBlock Text="{Binding NewsStatus}"
+                                       VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" FontSize="10" />
+                        </Border>
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                            <Button Content="📋 Copy"
+                                    Command="{Binding CopyNewsCommand}"
+                                    Padding="8,4" Margin="0,0,4,0" />
+                            <Button Content="↻"
+                                    Command="{Binding RegenerateNewsCommand}"
+                                    Padding="6,4" Margin="0,0,6,0"
+                                    ToolTip="Regenerate briefing" />
+                            <Button Content="🤖 Claude"
+                                    Command="{Binding AskAINewsCommand}"
+                                    Padding="6,4"
+                                    ToolTip="Copy briefing and open Claude" />
+                        </StackPanel>
+                        <TextBox Text="{Binding NewsReport, Mode=OneWay}"
+                                 IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                 TextWrapping="Wrap" AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas, Courier New" FontSize="11"
+                                 Background="White" BorderThickness="0" Padding="6"
+                                 VerticalContentAlignment="Top" />
                     </DockPanel>
                 </TabItem>
 

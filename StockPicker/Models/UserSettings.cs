@@ -65,5 +65,21 @@ namespace StockPicker.Models
         /// 0 means "use all available from the last scan".
         /// </summary>
         public int DayPickUniverseSize { get; set; } = 0;
+
+        // ── Earnings scanner settings ──────────────────────────────────────────
+        /// <summary>How many days ahead the earnings scanner looks. Default 30 (~1 month).</summary>
+        public int EarningsWindowDays { get; set; } = 30;
+
+        /// <summary>Target upside % the likelihood flag is measured against. Default 5%.</summary>
+        public decimal EarningsTargetUpPercent { get; set; } = 5.0m;
+
+        /// <summary>Whether the "buy on margin" toggle is on for the earnings scanner.</summary>
+        public bool EarningsUseMargin { get; set; } = false;
+
+        /// <summary>Equity margin requirement % (leverage = 100 / value). Default 50% (2×).</summary>
+        public decimal EarningsMarginPercent { get; set; } = 50m;
+
+        /// <summary>Assumed annualized margin interest rate %. Default 12.5%.</summary>
+        public decimal EarningsMarginRatePct { get; set; } = 12.5m;
     }
 }

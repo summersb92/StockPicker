@@ -261,6 +261,10 @@ namespace StockPicker.Services
                     q.ImpliedVolatility = GetDouble(item, "impliedVolatility");
                     // Theta requires the options chain endpoint; not available from basic quote — left null
 
+                    // Next earnings date — Yahoo reports earningsTimestamp (unix seconds) for most
+                    // large caps. Symbols without it simply won't surface in the Earnings scanner.
+                    q.NextEarningsDate = FromUnixSeconds(GetLong(item, "earningsTimestamp"));
+
                     result[sym] = q;
                 }
             }
@@ -294,6 +298,14 @@ namespace StockPicker.Services
         {
             if (!el.TryGetProperty(key, out var p)) return null;
             return p.ValueKind == JsonValueKind.Number ? p.GetInt64() : null;
+        }
+
+        /// <summary>Convert a unix-seconds timestamp to local DateTime, ignoring non-positive values.</summary>
+        private static DateTime? FromUnixSeconds(long? seconds)
+        {
+            if (!seconds.HasValue || seconds.Value <= 0) return null;
+            try { return DateTimeOffset.FromUnixTimeSeconds(seconds.Value).LocalDateTime; }
+            catch { return null; }
         }
 
         // ── Yahoo Finance session / crumb ─────────────────────────────────────────

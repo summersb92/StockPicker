@@ -52,5 +52,13 @@ namespace StockPicker.Models
         public double?  ImpliedVolatility  { get; set; }
         /// <summary>Theta (time decay per day, in dollars) of the near-term ATM option.</summary>
         public double?  Theta              { get; set; }
+
+        // ── Earnings ──────────────────────────────────────────────────────────
+        /// <summary>
+        /// Next scheduled earnings announcement date (local time), if the data source
+        /// reports one. Yahoo populates this via <c>earningsTimestamp</c> on most large
+        /// caps; null when unavailable. Drives the Earnings scanner tab.
+        /// </summary>
+        public DateTime? NextEarningsDate  { get; set; }
     }
 }

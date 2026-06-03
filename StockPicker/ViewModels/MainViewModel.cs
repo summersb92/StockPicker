@@ -40,6 +40,7 @@ namespace StockPicker.ViewModels
         private readonly ScanCacheService       _scanCacheService;
         private readonly UserSettingsService    _userSettingsService;
         private readonly IDayPickService        _dayPickService;
+        private readonly IEarningsScanService   _earningsScanService;
         private UserSettings                    _userSettings;
 
         // ── Market index refresh timer ────────────────────────────────────────
@@ -83,7 +84,8 @@ namespace StockPicker.ViewModels
                    new PortfolioService(),
                    new ScanCacheService(),
                    new UserSettingsService(),
-                   new DayPickService()) { }
+                   new DayPickService(),
+                   new EarningsScanService()) { }
 
         public MainViewModel(
             IStockDataService      dataService,
@@ -93,7 +95,8 @@ namespace StockPicker.ViewModels
             IPortfolioService      portfolioService,
             ScanCacheService       scanCacheService,
             UserSettingsService    userSettingsService,
-            IDayPickService        dayPickService)
+            IDayPickService        dayPickService,
+            IEarningsScanService   earningsScanService)
         {
             _dataService           = dataService;
             _analysisService       = analysisService;
@@ -103,6 +106,7 @@ namespace StockPicker.ViewModels
             _scanCacheService      = scanCacheService;
             _userSettingsService   = userSettingsService;
             _dayPickService        = dayPickService;
+            _earningsScanService   = earningsScanService;
 
             // Load user settings synchronously (tiny file — safe in constructor).
             _userSettings = _userSettingsService.Load();
@@ -127,6 +131,14 @@ namespace StockPicker.ViewModels
 
             AddDayPickToWatchCommand = new RelayCommand(p => AddDayPickToWatch(p),    _ => SelectedDayPick != null);
             AddDayPickToHeldCommand  = new RelayCommand(p => AddDayPickToHeld(p),    _ => SelectedDayPick != null);
+
+            ForceRefreshEarningsCommand = new RelayCommand(async _ => await GenerateEarningsPicksAsync(), _ => !IsBusy && _cachedHistory != null);
+            AddEarningsToWatchCommand   = new RelayCommand(p => AddEarningsToWatch(p), _ => SelectedEarningsPick != null);
+            AddEarningsToHeldCommand    = new RelayCommand(p => AddEarningsToHeld(p),  _ => SelectedEarningsPick != null);
+
+            RegenerateNewsCommand = new RelayCommand(_ => GenerateNewsReport());
+            CopyNewsCommand       = new RelayCommand(_ => CopyNewsReport(), _ => !string.IsNullOrWhiteSpace(NewsReport));
+            AskAINewsCommand      = new RelayCommand(_ => AskAIAboutNews(),  _ => Recommendations.Count > 0);
 
             AddToWatchCommand              = new RelayCommand(_ => AddSelectedToWatch(),    _ => SelectedRecommendation != null);
             AddToHeldCommand               = new RelayCommand(_ => AddSelectedToHeld(),    _ => SelectedRecommendation != null);
@@ -159,6 +171,13 @@ namespace StockPicker.ViewModels
             if (Enum.TryParse<DayPickStrategy>(_userSettings.DayPickStrategy, out var savedStrat))
                 _selectedDayPickStrategy = savedStrat;
             _dayPickUniverseSize = _userSettings.DayPickUniverseSize;
+
+            // Restore Earnings scanner settings
+            _earningsWindowDays     = _userSettings.EarningsWindowDays;
+            _earningsTargetUpPercent = _userSettings.EarningsTargetUpPercent;
+            _earningsUseMargin      = _userSettings.EarningsUseMargin;
+            _earningsMarginPercent  = _userSettings.EarningsMarginPercent;
+            _earningsMarginRatePct  = _userSettings.EarningsMarginRatePct;
 
             // Restore saved weekly target (falls back to field default of 2.0m if not in settings).
             _targetProfitMarginPercent = _userSettings.TargetProfitMarginPercent;
@@ -288,6 +307,7 @@ namespace StockPicker.ViewModels
         public BulkObservableCollection<Recommendation>  Recommendations { get; } = new();
         public ICollectionView RecommendationsView { get; private set; } = null!;
         public BulkObservableCollection<DayPick>          DayPicks        { get; } = new();
+        public BulkObservableCollection<EarningsPick>     EarningsPicks   { get; } = new();
         public ObservableCollection<MarketIndex>          MarketIndices   { get; } = new();
         public ObservableCollection<Recommendation>       WatchList       { get; } = new();
         public ObservableCollection<HeldPosition>         HeldList        { get; } = new();
@@ -355,6 +375,133 @@ namespace StockPicker.ViewModels
             private set => SetProperty(ref _dayPicksStatus, value);
         }
 
+        // ── Earnings scanner ────────────────────────────────────────────────
+        public static IReadOnlyList<int> EarningsWindowOptions { get; } =
+            new[] { 7, 14, 30, 60, 90 };
+
+        private string _earningsStatus = "Run a scan to find upcoming earnings.";
+        /// <summary>Status line shown in the Earnings tab header area.</summary>
+        public string EarningsStatus
+        {
+            get => _earningsStatus;
+            private set => SetProperty(ref _earningsStatus, value);
+        }
+
+        private int _earningsWindowDays = 30;
+        /// <summary>How many days ahead the earnings scanner looks.</summary>
+        public int EarningsWindowDays
+        {
+            get => _earningsWindowDays;
+            set
+            {
+                if (SetProperty(ref _earningsWindowDays, value))
+                {
+                    _userSettings.EarningsWindowDays = value;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        private decimal _earningsTargetUpPercent = 5.0m;
+        /// <summary>Target upside % the likelihood flag is measured against.</summary>
+        public decimal EarningsTargetUpPercent
+        {
+            get => _earningsTargetUpPercent;
+            set
+            {
+                var clamped = Math.Round(Math.Max(0.1m, value), 2);
+                if (SetProperty(ref _earningsTargetUpPercent, clamped))
+                {
+                    _userSettings.EarningsTargetUpPercent = clamped;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        private bool _earningsUseMargin;
+        /// <summary>Whether the "buy on margin" toggle is on.</summary>
+        public bool EarningsUseMargin
+        {
+            get => _earningsUseMargin;
+            set
+            {
+                if (SetProperty(ref _earningsUseMargin, value))
+                {
+                    _userSettings.EarningsUseMargin = value;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        private decimal _earningsMarginPercent = 50m;
+        /// <summary>Equity margin requirement % (leverage = 100 / value).</summary>
+        public decimal EarningsMarginPercent
+        {
+            get => _earningsMarginPercent;
+            set
+            {
+                var clamped = Math.Round(Math.Min(100m, Math.Max(10m, value)), 0);
+                if (SetProperty(ref _earningsMarginPercent, clamped))
+                {
+                    OnPropertyChanged(nameof(EarningsLeverageDisplay));
+                    _userSettings.EarningsMarginPercent = clamped;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    if (_earningsUseMargin) _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        private decimal _earningsMarginRatePct = 12.5m;
+        /// <summary>Assumed annualized margin interest rate %.</summary>
+        public decimal EarningsMarginRatePct
+        {
+            get => _earningsMarginRatePct;
+            set
+            {
+                var clamped = Math.Round(Math.Max(0m, value), 2);
+                if (SetProperty(ref _earningsMarginRatePct, clamped))
+                {
+                    _userSettings.EarningsMarginRatePct = clamped;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    if (_earningsUseMargin) _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        /// <summary>Live leverage label derived from the margin %.</summary>
+        public string EarningsLeverageDisplay =>
+            $"{(100m / Math.Max(1m, _earningsMarginPercent)):0.0}× leverage";
+
+        // ── News briefing ───────────────────────────────────────────────────
+        private string _newsReport = "Run a scan to generate the News briefing.";
+        /// <summary>
+        /// A copy-paste-ready markdown briefing of the top 5 picks plus the active
+        /// settings, intended to be pasted into another LLM for analysis.
+        /// </summary>
+        public string NewsReport
+        {
+            get => _newsReport;
+            private set
+            {
+                if (SetProperty(ref _newsReport, value))
+                    ((RelayCommand)CopyNewsCommand).RaiseCanExecuteChanged();
+            }
+        }
+
+        private string _newsStatus = "No briefing yet.";
+        /// <summary>Status line shown in the News tab header area.</summary>
+        public string NewsStatus
+        {
+            get => _newsStatus;
+            private set => SetProperty(ref _newsStatus, value);
+        }
+
+        /// <summary>How many top picks the briefing includes.</summary>
+        private const int NewsTopCount = 5;
+
         private string _marketIndexStatus = "Awaiting market data…";
         /// <summary>
         /// Short status string shown on the right end of the market index bar.
@@ -414,6 +561,23 @@ namespace StockPicker.ViewModels
                 {
                     ((RelayCommand)AddDayPickToWatchCommand).RaiseCanExecuteChanged();
                     ((RelayCommand)AddDayPickToHeldCommand).RaiseCanExecuteChanged();
+                    if (value != null) ActiveSelection = value;
+                    _ = LoadChartAsync(value?.Symbol);
+                    _ = LoadOptionsAsync(value?.Symbol);
+                }
+            }
+        }
+
+        private EarningsPick? _selectedEarningsPick;
+        public EarningsPick? SelectedEarningsPick
+        {
+            get => _selectedEarningsPick;
+            set
+            {
+                if (SetProperty(ref _selectedEarningsPick, value))
+                {
+                    ((RelayCommand)AddEarningsToWatchCommand).RaiseCanExecuteChanged();
+                    ((RelayCommand)AddEarningsToHeldCommand).RaiseCanExecuteChanged();
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
@@ -839,6 +1003,12 @@ namespace StockPicker.ViewModels
         public ICommand RefreshWatchPricesCommand     { get; }
         public ICommand AddDayPickToWatchCommand      { get; }
         public ICommand AddDayPickToHeldCommand       { get; }
+        public ICommand ForceRefreshEarningsCommand   { get; }
+        public ICommand AddEarningsToWatchCommand     { get; }
+        public ICommand AddEarningsToHeldCommand      { get; }
+        public ICommand RegenerateNewsCommand         { get; }
+        public ICommand CopyNewsCommand               { get; }
+        public ICommand AskAINewsCommand              { get; }
         public ICommand PromoteWatchToPositionCommand { get; }
         public ICommand OpenInBrowserCommand          { get; }
         public ICommand AskAICommand                  { get; }
@@ -1042,6 +1212,7 @@ namespace StockPicker.ViewModels
                 {
                     // Cache is fresh — generate day picks now (scan won't run to do it).
                     await GenerateDayPicksAsync();
+                    await GenerateEarningsPicksAsync();
 
                     var when = IsMarketHours() ? "will auto-refresh shortly" : "market is closed";
                     StatusMessage = $"Showing cached data from {diskCache.FetchTime:HH:mm} — {when}.";
@@ -1423,6 +1594,9 @@ namespace StockPicker.ViewModels
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
 
+            // Refresh the News briefing so it always reflects the latest picks/settings.
+            GenerateNewsReport();
+
             // Update live prices on watch and held items from the fresh summary cache.
             UpdatePortfolioPrices();
 
@@ -1433,6 +1607,7 @@ namespace StockPicker.ViewModels
                 StatusMessage = $"Scan complete — {recs.Count} recommendations generated.";
                 UpdateRefreshStatus();
                 await GenerateDayPicksAsync();
+                await GenerateEarningsPicksAsync();
             }
         }
 
@@ -1497,6 +1672,51 @@ namespace StockPicker.ViewModels
             catch (Exception ex)
             {
                 DayPicksStatus = $"Day picks error: {ex.Message}";
+            }
+        }
+
+        // ── Earnings scanner ────────────────────────────────────────────────────
+
+        private async Task GenerateEarningsPicksAsync()
+        {
+            if (_cachedUniverse == null || _cachedHistory == null || _cachedSummaries == null)
+            {
+                EarningsStatus = "No cached data — run a scan first.";
+                return;
+            }
+
+            EarningsStatus = $"Scanning for earnings in the next {_earningsWindowDays} days…";
+
+            try
+            {
+                var readonlyHistory =
+                    new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<StockQuote>>(
+                        _cachedHistory.ToDictionary(
+                            kv => kv.Key,
+                            kv => (IReadOnlyList<StockQuote>)kv.Value,
+                            StringComparer.OrdinalIgnoreCase));
+
+                var picks = await _earningsScanService.GenerateAsync(
+                    _cachedUniverse,
+                    readonlyHistory,
+                    _cachedSummaries,
+                    _cachedNameLookup,
+                    _earningsWindowDays,
+                    _earningsTargetUpPercent,
+                    _earningsUseMargin,
+                    _earningsMarginPercent,
+                    _earningsMarginRatePct);
+
+                EarningsPicks.ReplaceAll(picks);
+
+                int flagged = picks.Count(p => p.MeetsThreshold);
+                EarningsStatus = picks.Count > 0
+                    ? $"{picks.Count} with earnings ≤ {_earningsWindowDays}d  •  {flagged} flagged ≥ {_earningsTargetUpPercent:0.#}%"
+                    : $"No upcoming earnings within {_earningsWindowDays} days (data source may not report dates for these symbols).";
+            }
+            catch (Exception ex)
+            {
+                EarningsStatus = $"Earnings scan error: {ex.Message}";
             }
         }
 
@@ -1739,6 +1959,129 @@ namespace StockPicker.ViewModels
         /// Builds a batch prompt covering all current Daily Picks and opens the chosen AI.
         /// The full list is copied to the clipboard; Copilot also gets it in the URL.
         /// </summary>
+        // ── News briefing ───────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Builds a copy-paste-ready markdown briefing of the top picks (ranked by the
+        /// app's global settings) and stores it in <see cref="NewsReport"/>.
+        /// </summary>
+        private void GenerateNewsReport()
+        {
+            if (Recommendations.Count == 0)
+            {
+                NewsReport = "Run a scan to generate the News briefing.";
+                NewsStatus = "No briefing yet — run a scan first.";
+                return;
+            }
+
+            // Rank: actionable buys first, then by confidence (mirrors the global settings
+            // that already shaped the recommendation list — strategy, target %, universe).
+            var top = Recommendations
+                .OrderByDescending(r => r.Action == RecommendationAction.StrongBuy ||
+                                        r.Action == RecommendationAction.Buy)
+                .ThenByDescending(r => r.Confidence)
+                .ThenBy(r => r.ActionSortOrder)
+                .Take(NewsTopCount)
+                .ToList();
+
+            var sb = new System.Text.StringBuilder();
+            var now = DateTime.Now;
+
+            sb.AppendLine($"# StockPicker Market Briefing — Top {top.Count} Picks");
+            sb.AppendLine($"_Generated {now:dddd, MMM d yyyy  HH:mm}_");
+            sb.AppendLine();
+
+            // ── Settings that produced this list ──
+            sb.AppendLine("## Scan parameters");
+            sb.AppendLine($"- Strategy: **{SelectedStrategy?.Name ?? "(default)"}**");
+            sb.AppendLine($"- Universe: {SelectedIndexDescription}");
+            sb.AppendLine($"- Profit target: {TargetProfitMarginPercent:0.##}% weekly  (~{TargetMonthlyProfitPercent:0.##}% monthly)");
+            var sources = (_userSettings.EnabledDataSources != null && _userSettings.EnabledDataSources.Count > 0)
+                ? string.Join(", ", _userSettings.EnabledDataSources)
+                : "YahooFinance";
+            sb.AppendLine($"- Data sources: {sources}");
+            if (!string.IsNullOrEmpty(_lastScanTime))
+                sb.AppendLine($"- Last data refresh: {_lastScanTime}");
+            sb.AppendLine();
+
+            // ── The picks ──
+            sb.AppendLine("## Top picks");
+            int i = 1;
+            foreach (var r in top)
+            {
+                var action = FormatAction(r.Action);
+                sb.AppendLine($"### {i++}. {r.Symbol} — {r.CompanyName}");
+                sb.AppendLine($"**{action}**" +
+                              (r.Confidence > 0 ? $" · {r.Confidence:P0} confidence" : "") +
+                              (string.IsNullOrEmpty(r.Sector) ? "" : $" · {r.Sector}"));
+
+                if (r.LastPrice.HasValue)
+                {
+                    var chg = r.DayChangePct.HasValue
+                        ? $" ({(r.DayChangePct >= 0 ? "+" : "")}{r.DayChangePct:F2}% today)"
+                        : "";
+                    sb.AppendLine($"- Price: ${r.LastPrice:F2}{chg}");
+                }
+                if (r.WeekReturnPct.HasValue) sb.AppendLine($"- Week return: {(r.WeekReturnPct >= 0 ? "+" : "")}{r.WeekReturnPct:F2}%");
+                if (r.TargetPrice.HasValue)   sb.AppendLine($"- Target price: ${r.TargetPrice:F2}");
+                if (r.RSI14.HasValue)         sb.AppendLine($"- RSI(14): {r.RSI14:F0}");
+                if (r.SMA20.HasValue || r.SMA50.HasValue)
+                    sb.AppendLine($"- SMA20/50: {(r.SMA20.HasValue ? $"${r.SMA20:F2}" : "—")} / {(r.SMA50.HasValue ? $"${r.SMA50:F2}" : "—")}");
+                if (r.VolumeRatio.HasValue)   sb.AppendLine($"- Volume: {r.VolumeRatio:F1}× average");
+                if (!string.IsNullOrEmpty(r.MarketCapDisplay)) sb.AppendLine($"- Market cap: {r.MarketCapDisplay}");
+                if (r.PERatio.HasValue)       sb.AppendLine($"- P/E: {r.PERatio:F1}");
+                if (r.BuyDate.HasValue || r.SellDate.HasValue)
+                    sb.AppendLine($"- Suggested hold: {(r.BuyDate.HasValue ? r.BuyDate.Value.ToString("MMM d") : "—")} → {(r.SellDate.HasValue ? r.SellDate.Value.ToString("MMM d") : "—")} ({r.HoldingPeriod})");
+                if (!string.IsNullOrEmpty(r.Reasoning))
+                    sb.AppendLine($"- Rationale: {r.Reasoning}");
+                sb.AppendLine();
+            }
+
+            // ── Analysis request for the downstream LLM ──
+            sb.AppendLine("## Analysis request");
+            sb.AppendLine("You are an equity analyst. Using the data above:");
+            sb.AppendLine("1. Rank these picks from most to least attractive and justify the order.");
+            sb.AppendLine("2. Flag any pick you would avoid and explain the risk.");
+            sb.AppendLine("3. Note any sector concentration or correlated exposure across the list.");
+            sb.AppendLine("4. Call out upcoming catalysts (earnings, macro events) where relevant.");
+            sb.AppendLine("5. Suggest entry, stop-loss, and target levels for your top choice.");
+            sb.AppendLine();
+            sb.AppendLine("_Source: StockPicker algorithmic signals — not financial advice. Verify independently._");
+
+            NewsReport = sb.ToString().TrimEnd();
+            NewsStatus = $"Briefing ready — top {top.Count} of {Recommendations.Count} picks · {now:HH:mm}";
+        }
+
+        private static string FormatAction(RecommendationAction action) => action switch
+        {
+            RecommendationAction.StrongBuy  => "STRONG BUY",
+            RecommendationAction.Buy        => "BUY",
+            RecommendationAction.Hold       => "HOLD",
+            RecommendationAction.Sell       => "SELL",
+            RecommendationAction.StrongSell => "STRONG SELL",
+            _                               => action.ToString(),
+        };
+
+        /// <summary>Copy the current News briefing to the clipboard.</summary>
+        private void CopyNewsReport()
+        {
+            if (string.IsNullOrWhiteSpace(NewsReport)) return;
+            System.Windows.Clipboard.SetText(NewsReport);
+            NewsStatus  = $"Copied to clipboard · {DateTime.Now:HH:mm}";
+            StatusMessage = "News briefing copied to clipboard — paste it into any LLM.";
+        }
+
+        /// <summary>Copy the briefing and open Claude in the browser.</summary>
+        private void AskAIAboutNews()
+        {
+            if (Recommendations.Count == 0) return;
+            GenerateNewsReport();
+            System.Windows.Clipboard.SetText(NewsReport);
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo("https://claude.ai/new") { UseShellExecute = true });
+            StatusMessage = "News briefing copied — paste into Claude!";
+        }
+
         private void AskAIAboutPicks()
         {
             if (DayPicks.Count == 0) return;
@@ -1940,6 +2283,80 @@ namespace StockPicker.ViewModels
                     LastPrice   = pick.LastPrice ?? pick.EntryPrice,
                     Action      = pick.Direction == DayPickDirection.Long ? RecommendationAction.Buy : RecommendationAction.Sell,
                     RSI14       = pick.RSI14,
+                };
+                _portfolioService.AddToHeld(rec);
+            }
+
+            RefreshPortfolio();
+            StatusMessage = picks.Count == 1
+                ? $"{picks[0].Symbol} added to Positions."
+                : $"{picks.Count} picks added to Positions.";
+        }
+
+        // ── Earnings portfolio actions ──────────────────────────────────────────
+
+        /// <summary>
+        /// Resolves the command parameter from the Earnings DataGrid multi-select into a flat
+        /// list of <see cref="EarningsPick"/> items, falling back to <see cref="SelectedEarningsPick"/>.
+        /// </summary>
+        private List<EarningsPick> ResolveSelectedEarnings(object? parameter)
+        {
+            if (parameter is System.Collections.IList list)
+            {
+                var picks = new List<EarningsPick>(list.Count);
+                foreach (var item in list)
+                    if (item is EarningsPick ep) picks.Add(ep);
+                if (picks.Count > 0) return picks;
+            }
+            return SelectedEarningsPick != null
+                ? new List<EarningsPick> { SelectedEarningsPick }
+                : new List<EarningsPick>();
+        }
+
+        /// <summary>Add all selected Earnings picks to the watch list.</summary>
+        private void AddEarningsToWatch(object? parameter)
+        {
+            var picks = ResolveSelectedEarnings(parameter);
+            if (picks.Count == 0) return;
+
+            foreach (var pick in picks)
+            {
+                var rec = new Recommendation
+                {
+                    Symbol       = pick.Symbol,
+                    CompanyName  = pick.CompanyName,
+                    Sector       = pick.Sector,
+                    SourceTag    = "Earnings",
+                    LastPrice    = pick.LastPrice,
+                    WatchedPrice = pick.LastPrice,
+                    WatchedAt    = DateTime.Now,
+                    Action       = RecommendationAction.Buy,
+                };
+                _portfolioService.AddToWatch(rec);
+            }
+
+            RefreshPortfolio();
+            StatusMessage = picks.Count == 1
+                ? $"{picks[0].Symbol} added to Watch."
+                : $"{picks.Count} picks added to Watch.";
+        }
+
+        /// <summary>Add all selected Earnings picks to held positions.</summary>
+        private void AddEarningsToHeld(object? parameter)
+        {
+            var picks = ResolveSelectedEarnings(parameter);
+            if (picks.Count == 0) return;
+
+            foreach (var pick in picks)
+            {
+                var rec = new Recommendation
+                {
+                    Symbol      = pick.Symbol,
+                    CompanyName = pick.CompanyName,
+                    Sector      = pick.Sector,
+                    SourceTag   = "Earnings",
+                    LastPrice   = pick.LastPrice,
+                    Action      = RecommendationAction.Buy,
                 };
                 _portfolioService.AddToHeld(rec);
             }
