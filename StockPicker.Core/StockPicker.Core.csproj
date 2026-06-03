@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Cross-platform (Windows + Linux + macOS) core: models, data services,
+       analysis/recommendation engine, and the news-briefing builder.
+       Deliberately free of any WPF / Windows-only dependency so it can be
+       referenced by both the WPF desktop app and the cross-platform CLI. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StockPicker</RootNamespace>
+    <AssemblyName>StockPicker.Core</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

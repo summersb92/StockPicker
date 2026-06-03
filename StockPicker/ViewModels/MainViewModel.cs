@@ -136,9 +136,9 @@ namespace StockPicker.ViewModels
             AddEarningsToWatchCommand   = new RelayCommand(p => AddEarningsToWatch(p), _ => SelectedEarningsPick != null);
             AddEarningsToHeldCommand    = new RelayCommand(p => AddEarningsToHeld(p),  _ => SelectedEarningsPick != null);
 
-            RegenerateNewsCommand = new RelayCommand(_ => GenerateNewsReport());
+            RegenerateNewsCommand = new RelayCommand(async _ => await GenerateNewsReportAsync());
             CopyNewsCommand       = new RelayCommand(_ => CopyNewsReport(), _ => !string.IsNullOrWhiteSpace(NewsReport));
-            AskAINewsCommand      = new RelayCommand(_ => AskAIAboutNews(),  _ => Recommendations.Count > 0);
+            AskAINewsCommand      = new RelayCommand(async _ => await AskAIAboutNews(),  _ => Recommendations.Count > 0);
 
             AddToWatchCommand              = new RelayCommand(_ => AddSelectedToWatch(),    _ => SelectedRecommendation != null);
             AddToHeldCommand               = new RelayCommand(_ => AddSelectedToHeld(),    _ => SelectedRecommendation != null);
@@ -1594,11 +1594,12 @@ namespace StockPicker.ViewModels
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
 
-            // Refresh the News briefing so it always reflects the latest picks/settings.
-            GenerateNewsReport();
-
-            // Update live prices on watch and held items from the fresh summary cache.
+            // Update live prices on watch and held items from the fresh summary cache
+            // BEFORE building the briefing, so the positions section reflects current P/L.
             UpdatePortfolioPrices();
+
+            // Refresh the News briefing so it always reflects the latest picks/settings.
+            await GenerateNewsReportAsync();
 
             if (isScan)
             {
@@ -1965,7 +1966,7 @@ namespace StockPicker.ViewModels
         /// Builds a copy-paste-ready markdown briefing of the top picks (ranked by the
         /// app's global settings) and stores it in <see cref="NewsReport"/>.
         /// </summary>
-        private void GenerateNewsReport()
+        private async Task GenerateNewsReportAsync()
         {
             if (Recommendations.Count == 0)
             {
@@ -1974,92 +1975,69 @@ namespace StockPicker.ViewModels
                 return;
             }
 
-            // Rank: actionable buys first, then by confidence (mirrors the global settings
-            // that already shaped the recommendation list — strategy, target %, universe).
-            var top = Recommendations
-                .OrderByDescending(r => r.Action == RecommendationAction.StrongBuy ||
-                                        r.Action == RecommendationAction.Buy)
-                .ThenByDescending(r => r.Confidence)
-                .ThenBy(r => r.ActionSortOrder)
-                .Take(NewsTopCount)
-                .ToList();
+            // Best Buys across EVERY strategy (independent of the one selected).
+            // Memoized against the cached data, so strategy/target flips are instant.
+            var bestAny = await GetBestAnyStrategyAsync();
 
-            var sb = new System.Text.StringBuilder();
-            var now = DateTime.Now;
-
-            sb.AppendLine($"# StockPicker Market Briefing — Top {top.Count} Picks");
-            sb.AppendLine($"_Generated {now:dddd, MMM d yyyy  HH:mm}_");
-            sb.AppendLine();
-
-            // ── Settings that produced this list ──
-            sb.AppendLine("## Scan parameters");
-            sb.AppendLine($"- Strategy: **{SelectedStrategy?.Name ?? "(default)"}**");
-            sb.AppendLine($"- Universe: {SelectedIndexDescription}");
-            sb.AppendLine($"- Profit target: {TargetProfitMarginPercent:0.##}% weekly  (~{TargetMonthlyProfitPercent:0.##}% monthly)");
-            var sources = (_userSettings.EnabledDataSources != null && _userSettings.EnabledDataSources.Count > 0)
-                ? string.Join(", ", _userSettings.EnabledDataSources)
-                : "YahooFinance";
-            sb.AppendLine($"- Data sources: {sources}");
-            if (!string.IsNullOrEmpty(_lastScanTime))
-                sb.AppendLine($"- Last data refresh: {_lastScanTime}");
-            sb.AppendLine();
-
-            // ── The picks ──
-            sb.AppendLine("## Top picks");
-            int i = 1;
-            foreach (var r in top)
+            var input = new BriefingInput
             {
-                var action = FormatAction(r.Action);
-                sb.AppendLine($"### {i++}. {r.Symbol} — {r.CompanyName}");
-                sb.AppendLine($"**{action}**" +
-                              (r.Confidence > 0 ? $" · {r.Confidence:P0} confidence" : "") +
-                              (string.IsNullOrEmpty(r.Sector) ? "" : $" · {r.Sector}"));
+                StrategyName         = SelectedStrategy?.Name ?? "(default)",
+                UniverseDescription  = SelectedIndexDescription,
+                TargetWeeklyPercent  = TargetProfitMarginPercent,
+                TargetMonthlyPercent = TargetMonthlyProfitPercent,
+                DataSources          = _userSettings.EnabledDataSources is { Count: > 0 }
+                                           ? _userSettings.EnabledDataSources
+                                           : new List<string> { "YahooFinance" },
+                LastDataRefresh      = _lastScanTime,
+                Recommendations      = Recommendations.ToList(),
+                Positions            = HeldList.ToList(),
+                Earnings             = EarningsPicks.ToList(),
+                BestAnyStrategy      = bestAny,
+                EarningsWindowDays   = _earningsWindowDays,
+                TopCount             = NewsTopCount,
+                GeneratedAt          = DateTime.Now,
+            };
 
-                if (r.LastPrice.HasValue)
-                {
-                    var chg = r.DayChangePct.HasValue
-                        ? $" ({(r.DayChangePct >= 0 ? "+" : "")}{r.DayChangePct:F2}% today)"
-                        : "";
-                    sb.AppendLine($"- Price: ${r.LastPrice:F2}{chg}");
-                }
-                if (r.WeekReturnPct.HasValue) sb.AppendLine($"- Week return: {(r.WeekReturnPct >= 0 ? "+" : "")}{r.WeekReturnPct:F2}%");
-                if (r.TargetPrice.HasValue)   sb.AppendLine($"- Target price: ${r.TargetPrice:F2}");
-                if (r.RSI14.HasValue)         sb.AppendLine($"- RSI(14): {r.RSI14:F0}");
-                if (r.SMA20.HasValue || r.SMA50.HasValue)
-                    sb.AppendLine($"- SMA20/50: {(r.SMA20.HasValue ? $"${r.SMA20:F2}" : "—")} / {(r.SMA50.HasValue ? $"${r.SMA50:F2}" : "—")}");
-                if (r.VolumeRatio.HasValue)   sb.AppendLine($"- Volume: {r.VolumeRatio:F1}× average");
-                if (!string.IsNullOrEmpty(r.MarketCapDisplay)) sb.AppendLine($"- Market cap: {r.MarketCapDisplay}");
-                if (r.PERatio.HasValue)       sb.AppendLine($"- P/E: {r.PERatio:F1}");
-                if (r.BuyDate.HasValue || r.SellDate.HasValue)
-                    sb.AppendLine($"- Suggested hold: {(r.BuyDate.HasValue ? r.BuyDate.Value.ToString("MMM d") : "—")} → {(r.SellDate.HasValue ? r.SellDate.Value.ToString("MMM d") : "—")} ({r.HoldingPeriod})");
-                if (!string.IsNullOrEmpty(r.Reasoning))
-                    sb.AppendLine($"- Rationale: {r.Reasoning}");
-                sb.AppendLine();
-            }
-
-            // ── Analysis request for the downstream LLM ──
-            sb.AppendLine("## Analysis request");
-            sb.AppendLine("You are an equity analyst. Using the data above:");
-            sb.AppendLine("1. Rank these picks from most to least attractive and justify the order.");
-            sb.AppendLine("2. Flag any pick you would avoid and explain the risk.");
-            sb.AppendLine("3. Note any sector concentration or correlated exposure across the list.");
-            sb.AppendLine("4. Call out upcoming catalysts (earnings, macro events) where relevant.");
-            sb.AppendLine("5. Suggest entry, stop-loss, and target levels for your top choice.");
-            sb.AppendLine();
-            sb.AppendLine("_Source: StockPicker algorithmic signals — not financial advice. Verify independently._");
-
-            NewsReport = sb.ToString().TrimEnd();
-            NewsStatus = $"Briefing ready — top {top.Count} of {Recommendations.Count} picks · {now:HH:mm}";
+            NewsReport = NewsBriefingBuilder.Build(input);
+            NewsStatus = $"Briefing ready — positions, earnings & cross-strategy picks · {DateTime.Now:HH:mm}";
         }
 
-        private static string FormatAction(RecommendationAction action) => action switch
+        // Cross-strategy "best" cache. Recomputed only when the underlying price data
+        // (referenced by _cachedHistory) is replaced by a fresh fetch.
+        private List<BestPick>? _bestAnyStrategy;
+        private object? _bestAnyStrategyComputedFor;
+
+        /// <summary>
+        /// Top Buy/StrongBuy picks across every strategy, deduplicated to the best read
+        /// per symbol. Delegates to the shared <see cref="ScanEngine"/> and memoizes
+        /// against the current cached data set so strategy/target flips don't recompute.
+        /// </summary>
+        private async Task<List<BestPick>> GetBestAnyStrategyAsync()
         {
-            RecommendationAction.StrongBuy  => "STRONG BUY",
-            RecommendationAction.Buy        => "BUY",
-            RecommendationAction.Hold       => "HOLD",
-            RecommendationAction.Sell       => "SELL",
-            RecommendationAction.StrongSell => "STRONG SELL",
-            _                               => action.ToString(),
+            if (_cachedUniverse == null || _cachedHistory == null)
+                return new List<BestPick>();
+
+            if (_bestAnyStrategy != null && ReferenceEquals(_bestAnyStrategyComputedFor, _cachedHistory))
+                return _bestAnyStrategy;
+
+            var best = await ScanEngine.BestAcrossStrategiesAsync(
+                BuildScanData(), Strategies.ToList(), TargetProfitMarginPercent,
+                _analysisService, _recommendationService, NewsTopCount);
+
+            _bestAnyStrategy            = best;
+            _bestAnyStrategyComputedFor = _cachedHistory;
+            return best;
+        }
+
+        /// <summary>Snapshots the in-memory cache fields into a <see cref="ScanData"/> for the engine.</summary>
+        private ScanData BuildScanData() => new()
+        {
+            Universe   = _cachedUniverse  ?? Array.Empty<Stock>(),
+            History    = _cachedHistory   ?? new Dictionary<string, IReadOnlyList<StockQuote>>(StringComparer.OrdinalIgnoreCase),
+            Summaries  = _cachedSummaries ?? new Dictionary<string, QuoteSummary>(StringComparer.OrdinalIgnoreCase),
+            NameLookup = _cachedNameLookup ?? new Dictionary<string, (string Name, string Sector)>(StringComparer.OrdinalIgnoreCase),
+            WeekStart  = _cachedWeekStart,
+            WeekEnd    = _cachedWeekEnd,
         };
 
         /// <summary>Copy the current News briefing to the clipboard.</summary>
@@ -2072,10 +2050,10 @@ namespace StockPicker.ViewModels
         }
 
         /// <summary>Copy the briefing and open Claude in the browser.</summary>
-        private void AskAIAboutNews()
+        private async Task AskAIAboutNews()
         {
             if (Recommendations.Count == 0) return;
-            GenerateNewsReport();
+            await GenerateNewsReportAsync();
             System.Windows.Clipboard.SetText(NewsReport);
             System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo("https://claude.ai/new") { UseShellExecute = true });
