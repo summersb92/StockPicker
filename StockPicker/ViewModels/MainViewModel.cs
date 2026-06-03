@@ -136,15 +136,16 @@ namespace StockPicker.ViewModels
             AddEarningsToWatchCommand   = new RelayCommand(p => AddEarningsToWatch(p), _ => SelectedEarningsPick != null);
             AddEarningsToHeldCommand    = new RelayCommand(p => AddEarningsToHeld(p),  _ => SelectedEarningsPick != null);
 
-            RegenerateNewsCommand = new RelayCommand(_ => GenerateNewsReport());
+            RegenerateNewsCommand = new RelayCommand(async _ => await GenerateNewsReportAsync());
             CopyNewsCommand       = new RelayCommand(_ => CopyNewsReport(), _ => !string.IsNullOrWhiteSpace(NewsReport));
-            AskAINewsCommand      = new RelayCommand(_ => AskAIAboutNews(),  _ => Recommendations.Count > 0);
+            AskAINewsCommand      = new RelayCommand(async _ => await AskAIAboutNews(),  _ => Recommendations.Count > 0);
 
             AddToWatchCommand              = new RelayCommand(_ => AddSelectedToWatch(),    _ => SelectedRecommendation != null);
             AddToHeldCommand               = new RelayCommand(_ => AddSelectedToHeld(),    _ => SelectedRecommendation != null);
             RemoveFromWatchCommand         = new RelayCommand(_ => RemoveSelectedWatch(),  _ => SelectedWatch           != null);
             RemoveFromHeldCommand          = new RelayCommand(_ => RemoveSelectedHeld(),   _ => SelectedHeld            != null);
             PromoteWatchToPositionCommand  = new RelayCommand(_ => PromoteWatchToPosition(), _ => SelectedWatch         != null);
+            RefreshPerformanceCommand      = new RelayCommand(async _ => await RefreshPerformanceAsync(), _ => HeldList.Count > 0 && !IsPerformanceLoading);
             OpenInBrowserCommand           = new RelayCommand(p =>
             {
                 if (p is string sym && !string.IsNullOrEmpty(sym))
@@ -320,6 +321,27 @@ namespace StockPicker.ViewModels
         // ── Empty-state flags ─────────────────────────────────────────────────
         public bool WatchListIsEmpty => WatchList.Count == 0;
         public bool HeldListIsEmpty  => HeldList.Count  == 0;
+
+        // ── Portfolio performance (week / month / quarter / year) ─────────────
+
+        private PortfolioPerformance _performance = PortfolioPerformance.Empty;
+        /// <summary>Reconstructed trailing-window performance of the held positions.</summary>
+        public PortfolioPerformance Performance
+        {
+            get => _performance;
+            private set => SetProperty(ref _performance, value);
+        }
+
+        private bool _isPerformanceLoading;
+        public bool IsPerformanceLoading
+        {
+            get => _isPerformanceLoading;
+            private set
+            {
+                if (SetProperty(ref _isPerformanceLoading, value))
+                    ((RelayCommand)RefreshPerformanceCommand).RaiseCanExecuteChanged();
+            }
+        }
 
         // ── Active selection ──────────────────────────────────────────────────
         public bool HasActiveSelection => _activeSelection != null;
@@ -739,8 +761,9 @@ namespace StockPicker.ViewModels
                     _syncingProfit = false;
                 }
 
-                if (_cachedUniverse != null && !IsBusy)
-                    _ = ApplyStrategyAsync(isScan: false);
+                // The full refresh (tables + News briefing) runs when the Settings
+                // dialog closes — see RefreshAfterSettingsAsync — so we don't re-run
+                // analysis on every spinner click behind the modal dialog.
             }
         }
 
@@ -1010,6 +1033,7 @@ namespace StockPicker.ViewModels
         public ICommand CopyNewsCommand               { get; }
         public ICommand AskAINewsCommand              { get; }
         public ICommand PromoteWatchToPositionCommand { get; }
+        public ICommand RefreshPerformanceCommand     { get; }
         public ICommand OpenInBrowserCommand          { get; }
         public ICommand AskAICommand                  { get; }
 
@@ -1154,6 +1178,10 @@ namespace StockPicker.ViewModels
             // then kick off a live refresh in the background.
             ApplyCachedMarketIndices();
             _ = StartupIndexFetchAsync();
+
+            // Compute portfolio performance in the background (held positions were
+            // loaded from disk in the constructor).
+            _ = RefreshPerformanceAsync();
 
             var diskCache = await _scanCacheService.LoadAsync();
 
@@ -1474,6 +1502,70 @@ namespace StockPicker.ViewModels
             }
         }
 
+        // ── Settings-change refresh ───────────────────────────────────────────
+
+        /// <summary>
+        /// Snapshot of the scanning/analysis settings that should trigger a refresh
+        /// when changed. Captured before the Settings dialog opens and compared
+        /// against the live values once it closes.
+        /// </summary>
+        public sealed record ScanSettingsSnapshot(
+            IndexUniverse Index,
+            int UniverseSize,
+            decimal TargetWeekly,
+            string EnabledSources);
+
+        /// <summary>Captures the current scanning/analysis settings for later comparison.</summary>
+        public ScanSettingsSnapshot CaptureScanSettings() => new(
+            SelectedIndex,
+            UniverseSize,
+            TargetProfitMarginPercent,
+            string.Join(",", DataSources.Where(d => d.IsEnabled)
+                                        .Select(d => d.SourceType.ToString())
+                                        .OrderBy(s => s, StringComparer.Ordinal)));
+
+        /// <summary>
+        /// Re-runs the pipeline after the Settings dialog closes, but only when a
+        /// scanning/analysis setting actually changed:
+        ///   • Universe, scan limit, or enabled data sources changed → full network
+        ///     re-scan (refreshes Recommendations, Day Picks, Earnings, and the News
+        ///     briefing from fresh data).
+        ///   • Only the profit target changed → re-run analysis against the cached
+        ///     data and refresh every table + the briefing (no network round-trip).
+        /// Nothing relevant changed → no work is done.
+        /// </summary>
+        public async Task RefreshAfterSettingsAsync(ScanSettingsSnapshot? before)
+        {
+            if (before is null || IsBusy) return;
+
+            var after = CaptureScanSettings();
+
+            bool dataChanged = before.Index          != after.Index
+                            || before.UniverseSize   != after.UniverseSize
+                            || before.EnabledSources != after.EnabledSources;
+
+            bool analysisChanged = before.TargetWeekly != after.TargetWeekly;
+
+            if (dataChanged)
+            {
+                // New universe / limit / sources → the cached data no longer matches
+                // the request, so fetch fresh. RunWeeklyScanAsync → ApplyStrategyAsync
+                // (isScan: true) regenerates all three tables and the News briefing.
+                StatusMessage = "Settings updated — rescanning with the new data set…";
+                await RunWeeklyScanAsync();
+            }
+            else if (analysisChanged && _cachedUniverse != null)
+            {
+                // Targets changed but the underlying data is still valid — re-run
+                // against the cache (no network) and refresh every table + briefing.
+                StatusMessage = "Settings updated — refreshing analysis, picks, and briefing…";
+                await ApplyStrategyAsync(isScan: false);   // Recommendations + News briefing
+                await GenerateDayPicksAsync(force: true);  // Day Picks table
+                await GenerateEarningsPicksAsync();        // Earnings table
+                StatusMessage = "Updated for the new targets.";
+            }
+        }
+
         // ── Cache persistence ─────────────────────────────────────────────────
 
         /// <summary>
@@ -1594,11 +1686,12 @@ namespace StockPicker.ViewModels
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
 
-            // Refresh the News briefing so it always reflects the latest picks/settings.
-            GenerateNewsReport();
-
-            // Update live prices on watch and held items from the fresh summary cache.
+            // Update live prices on watch and held items from the fresh summary cache
+            // BEFORE building the briefing, so the positions section reflects current P/L.
             UpdatePortfolioPrices();
+
+            // Refresh the News briefing so it always reflects the latest picks/settings.
+            await GenerateNewsReportAsync();
 
             if (isScan)
             {
@@ -1965,7 +2058,7 @@ namespace StockPicker.ViewModels
         /// Builds a copy-paste-ready markdown briefing of the top picks (ranked by the
         /// app's global settings) and stores it in <see cref="NewsReport"/>.
         /// </summary>
-        private void GenerateNewsReport()
+        private async Task GenerateNewsReportAsync()
         {
             if (Recommendations.Count == 0)
             {
@@ -1974,92 +2067,69 @@ namespace StockPicker.ViewModels
                 return;
             }
 
-            // Rank: actionable buys first, then by confidence (mirrors the global settings
-            // that already shaped the recommendation list — strategy, target %, universe).
-            var top = Recommendations
-                .OrderByDescending(r => r.Action == RecommendationAction.StrongBuy ||
-                                        r.Action == RecommendationAction.Buy)
-                .ThenByDescending(r => r.Confidence)
-                .ThenBy(r => r.ActionSortOrder)
-                .Take(NewsTopCount)
-                .ToList();
+            // Best Buys across EVERY strategy (independent of the one selected).
+            // Memoized against the cached data, so strategy/target flips are instant.
+            var bestAny = await GetBestAnyStrategyAsync();
 
-            var sb = new System.Text.StringBuilder();
-            var now = DateTime.Now;
-
-            sb.AppendLine($"# StockPicker Market Briefing — Top {top.Count} Picks");
-            sb.AppendLine($"_Generated {now:dddd, MMM d yyyy  HH:mm}_");
-            sb.AppendLine();
-
-            // ── Settings that produced this list ──
-            sb.AppendLine("## Scan parameters");
-            sb.AppendLine($"- Strategy: **{SelectedStrategy?.Name ?? "(default)"}**");
-            sb.AppendLine($"- Universe: {SelectedIndexDescription}");
-            sb.AppendLine($"- Profit target: {TargetProfitMarginPercent:0.##}% weekly  (~{TargetMonthlyProfitPercent:0.##}% monthly)");
-            var sources = (_userSettings.EnabledDataSources != null && _userSettings.EnabledDataSources.Count > 0)
-                ? string.Join(", ", _userSettings.EnabledDataSources)
-                : "YahooFinance";
-            sb.AppendLine($"- Data sources: {sources}");
-            if (!string.IsNullOrEmpty(_lastScanTime))
-                sb.AppendLine($"- Last data refresh: {_lastScanTime}");
-            sb.AppendLine();
-
-            // ── The picks ──
-            sb.AppendLine("## Top picks");
-            int i = 1;
-            foreach (var r in top)
+            var input = new BriefingInput
             {
-                var action = FormatAction(r.Action);
-                sb.AppendLine($"### {i++}. {r.Symbol} — {r.CompanyName}");
-                sb.AppendLine($"**{action}**" +
-                              (r.Confidence > 0 ? $" · {r.Confidence:P0} confidence" : "") +
-                              (string.IsNullOrEmpty(r.Sector) ? "" : $" · {r.Sector}"));
+                StrategyName         = SelectedStrategy?.Name ?? "(default)",
+                UniverseDescription  = SelectedIndexDescription,
+                TargetWeeklyPercent  = TargetProfitMarginPercent,
+                TargetMonthlyPercent = TargetMonthlyProfitPercent,
+                DataSources          = _userSettings.EnabledDataSources is { Count: > 0 }
+                                           ? _userSettings.EnabledDataSources
+                                           : new List<string> { "YahooFinance" },
+                LastDataRefresh      = _lastScanTime,
+                Recommendations      = Recommendations.ToList(),
+                Positions            = HeldList.ToList(),
+                Earnings             = EarningsPicks.ToList(),
+                BestAnyStrategy      = bestAny,
+                EarningsWindowDays   = _earningsWindowDays,
+                TopCount             = NewsTopCount,
+                GeneratedAt          = DateTime.Now,
+            };
 
-                if (r.LastPrice.HasValue)
-                {
-                    var chg = r.DayChangePct.HasValue
-                        ? $" ({(r.DayChangePct >= 0 ? "+" : "")}{r.DayChangePct:F2}% today)"
-                        : "";
-                    sb.AppendLine($"- Price: ${r.LastPrice:F2}{chg}");
-                }
-                if (r.WeekReturnPct.HasValue) sb.AppendLine($"- Week return: {(r.WeekReturnPct >= 0 ? "+" : "")}{r.WeekReturnPct:F2}%");
-                if (r.TargetPrice.HasValue)   sb.AppendLine($"- Target price: ${r.TargetPrice:F2}");
-                if (r.RSI14.HasValue)         sb.AppendLine($"- RSI(14): {r.RSI14:F0}");
-                if (r.SMA20.HasValue || r.SMA50.HasValue)
-                    sb.AppendLine($"- SMA20/50: {(r.SMA20.HasValue ? $"${r.SMA20:F2}" : "—")} / {(r.SMA50.HasValue ? $"${r.SMA50:F2}" : "—")}");
-                if (r.VolumeRatio.HasValue)   sb.AppendLine($"- Volume: {r.VolumeRatio:F1}× average");
-                if (!string.IsNullOrEmpty(r.MarketCapDisplay)) sb.AppendLine($"- Market cap: {r.MarketCapDisplay}");
-                if (r.PERatio.HasValue)       sb.AppendLine($"- P/E: {r.PERatio:F1}");
-                if (r.BuyDate.HasValue || r.SellDate.HasValue)
-                    sb.AppendLine($"- Suggested hold: {(r.BuyDate.HasValue ? r.BuyDate.Value.ToString("MMM d") : "—")} → {(r.SellDate.HasValue ? r.SellDate.Value.ToString("MMM d") : "—")} ({r.HoldingPeriod})");
-                if (!string.IsNullOrEmpty(r.Reasoning))
-                    sb.AppendLine($"- Rationale: {r.Reasoning}");
-                sb.AppendLine();
-            }
-
-            // ── Analysis request for the downstream LLM ──
-            sb.AppendLine("## Analysis request");
-            sb.AppendLine("You are an equity analyst. Using the data above:");
-            sb.AppendLine("1. Rank these picks from most to least attractive and justify the order.");
-            sb.AppendLine("2. Flag any pick you would avoid and explain the risk.");
-            sb.AppendLine("3. Note any sector concentration or correlated exposure across the list.");
-            sb.AppendLine("4. Call out upcoming catalysts (earnings, macro events) where relevant.");
-            sb.AppendLine("5. Suggest entry, stop-loss, and target levels for your top choice.");
-            sb.AppendLine();
-            sb.AppendLine("_Source: StockPicker algorithmic signals — not financial advice. Verify independently._");
-
-            NewsReport = sb.ToString().TrimEnd();
-            NewsStatus = $"Briefing ready — top {top.Count} of {Recommendations.Count} picks · {now:HH:mm}";
+            NewsReport = NewsBriefingBuilder.Build(input);
+            NewsStatus = $"Briefing ready — positions, earnings & cross-strategy picks · {DateTime.Now:HH:mm}";
         }
 
-        private static string FormatAction(RecommendationAction action) => action switch
+        // Cross-strategy "best" cache. Recomputed only when the underlying price data
+        // (referenced by _cachedHistory) is replaced by a fresh fetch.
+        private List<BestPick>? _bestAnyStrategy;
+        private object? _bestAnyStrategyComputedFor;
+
+        /// <summary>
+        /// Top Buy/StrongBuy picks across every strategy, deduplicated to the best read
+        /// per symbol. Delegates to the shared <see cref="ScanEngine"/> and memoizes
+        /// against the current cached data set so strategy/target flips don't recompute.
+        /// </summary>
+        private async Task<List<BestPick>> GetBestAnyStrategyAsync()
         {
-            RecommendationAction.StrongBuy  => "STRONG BUY",
-            RecommendationAction.Buy        => "BUY",
-            RecommendationAction.Hold       => "HOLD",
-            RecommendationAction.Sell       => "SELL",
-            RecommendationAction.StrongSell => "STRONG SELL",
-            _                               => action.ToString(),
+            if (_cachedUniverse == null || _cachedHistory == null)
+                return new List<BestPick>();
+
+            if (_bestAnyStrategy != null && ReferenceEquals(_bestAnyStrategyComputedFor, _cachedHistory))
+                return _bestAnyStrategy;
+
+            var best = await ScanEngine.BestAcrossStrategiesAsync(
+                BuildScanData(), Strategies.ToList(), TargetProfitMarginPercent,
+                _analysisService, _recommendationService, NewsTopCount);
+
+            _bestAnyStrategy            = best;
+            _bestAnyStrategyComputedFor = _cachedHistory;
+            return best;
+        }
+
+        /// <summary>Snapshots the in-memory cache fields into a <see cref="ScanData"/> for the engine.</summary>
+        private ScanData BuildScanData() => new()
+        {
+            Universe   = _cachedUniverse  ?? Array.Empty<Stock>(),
+            History    = _cachedHistory   ?? new Dictionary<string, IReadOnlyList<StockQuote>>(StringComparer.OrdinalIgnoreCase),
+            Summaries  = _cachedSummaries ?? new Dictionary<string, QuoteSummary>(StringComparer.OrdinalIgnoreCase),
+            NameLookup = _cachedNameLookup ?? new Dictionary<string, (string Name, string Sector)>(StringComparer.OrdinalIgnoreCase),
+            WeekStart  = _cachedWeekStart,
+            WeekEnd    = _cachedWeekEnd,
         };
 
         /// <summary>Copy the current News briefing to the clipboard.</summary>
@@ -2071,11 +2141,39 @@ namespace StockPicker.ViewModels
             StatusMessage = "News briefing copied to clipboard — paste it into any LLM.";
         }
 
+        /// <summary>True when there is a real briefing to save (not the placeholder text).</summary>
+        public bool HasNewsReport =>
+            !string.IsNullOrWhiteSpace(NewsReport) && Recommendations.Count > 0;
+
+        /// <summary>A sensible default file name for saving the briefing.</summary>
+        public string SuggestedNewsFileName =>
+            $"StockPicker-Briefing-{DateTime.Now:yyyy-MM-dd-HHmm}.md";
+
+        /// <summary>
+        /// Writes the current News briefing to <paramref name="path"/>. The View supplies
+        /// the path via a Save dialog; this method owns the write and status update.
+        /// </summary>
+        public void SaveNewsReport(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(NewsReport)) return;
+
+            try
+            {
+                System.IO.File.WriteAllText(path, NewsReport);
+                NewsStatus    = $"Saved to {System.IO.Path.GetFileName(path)} · {DateTime.Now:HH:mm}";
+                StatusMessage = $"News briefing saved to {path}";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Could not save briefing: {ex.Message}";
+            }
+        }
+
         /// <summary>Copy the briefing and open Claude in the browser.</summary>
-        private void AskAIAboutNews()
+        private async Task AskAIAboutNews()
         {
             if (Recommendations.Count == 0) return;
-            GenerateNewsReport();
+            await GenerateNewsReportAsync();
             System.Windows.Clipboard.SetText(NewsReport);
             System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo("https://claude.ai/new") { UseShellExecute = true });
@@ -2288,6 +2386,7 @@ namespace StockPicker.ViewModels
             }
 
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = picks.Count == 1
                 ? $"{picks[0].Symbol} added to Positions."
                 : $"{picks.Count} picks added to Positions.";
@@ -2362,6 +2461,7 @@ namespace StockPicker.ViewModels
             }
 
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = picks.Count == 1
                 ? $"{picks[0].Symbol} added to Positions."
                 : $"{picks.Count} picks added to Positions.";
@@ -2388,6 +2488,7 @@ namespace StockPicker.ViewModels
             rec.SourceTag = SelectedStrategy?.Name ?? "Recommendation";
             _portfolioService.AddToHeld(rec);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = $"{rec.Symbol} added to Positions ({rec.SourceTag}).";
         }
 
@@ -2413,6 +2514,7 @@ namespace StockPicker.ViewModels
             if (SelectedHeld == null) return;
             _portfolioService.RemoveFromHeld(SelectedHeld.Symbol);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
         }
 
         /// <summary>Promote the selected watch item to an open position.</summary>
@@ -2422,7 +2524,52 @@ namespace StockPicker.ViewModels
             _portfolioService.AddToHeld(SelectedWatch);
             _portfolioService.RemoveFromWatch(SelectedWatch.Symbol);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = $"{SelectedWatch?.Symbol ?? "Stock"} moved to Positions.";
+        }
+
+        // ── Manual position entry + performance ───────────────────────────────
+
+        /// <summary>
+        /// Adds a new manually-entered position or updates an existing one, then refreshes
+        /// the Positions table, the performance panel, and the News briefing.
+        /// </summary>
+        public async Task UpsertPosition(HeldPosition position)
+        {
+            if (position == null) return;
+
+            _portfolioService.UpsertHeld(position);
+            RefreshPortfolio();                  // reload HeldList + inject cached prices
+            StatusMessage = $"{position.Symbol} saved to Positions.";
+            await RefreshPerformanceAsync();     // recompute W/M/Q/Y
+            await GenerateNewsReportAsync();     // briefing reflects the updated holdings
+        }
+
+        /// <summary>
+        /// Recomputes trailing-window performance for the held positions by pulling each
+        /// symbol's price history. Safe to call with an empty portfolio (clears the panel).
+        /// </summary>
+        public async Task RefreshPerformanceAsync()
+        {
+            if (HeldList.Count == 0)
+            {
+                Performance = PortfolioPerformance.Empty;
+                return;
+            }
+
+            IsPerformanceLoading = true;
+            try
+            {
+                Performance = await PerformanceService.ComputeAsync(HeldList.ToList(), _dataService);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Performance unavailable ({ex.Message}).";
+            }
+            finally
+            {
+                IsPerformanceLoading = false;
+            }
         }
     }
 }

@@ -236,16 +236,79 @@ namespace StockPicker
                 vm.RemoveFromHeldCommand.Execute(null);
         }
 
+        // ── Manual position add / edit ────────────────────────────────────────
+
+        private async void AddPosition_Click(object sender, RoutedEventArgs e)
+            => await OpenPositionEditorAsync(null);
+
+        private async void EditPosition_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is MainViewModel vm && vm.SelectedHeld != null)
+                await OpenPositionEditorAsync(vm.SelectedHeld);
+        }
+
+        private async void HeldGrid_DoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (DataContext is MainViewModel vm && vm.SelectedHeld != null)
+                await OpenPositionEditorAsync(vm.SelectedHeld);
+        }
+
+        private async System.Threading.Tasks.Task OpenPositionEditorAsync(StockPicker.Models.HeldPosition? existing)
+        {
+            if (DataContext is not MainViewModel vm) return;
+
+            var dlg = new PositionEditWindow(existing) { Owner = this };
+            if (dlg.ShowDialog() == true && dlg.Result != null)
+                await vm.UpsertPosition(dlg.Result);
+        }
+
+        // ── Save News briefing ────────────────────────────────────────────────
+
+        private void SaveNews_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm) return;
+
+            if (!vm.HasNewsReport)
+            {
+                MessageBox.Show(this, "There's no briefing to save yet — run a scan first.",
+                    "Nothing to save", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title            = "Save News Briefing",
+                FileName         = vm.SuggestedNewsFileName,
+                DefaultExt       = ".md",
+                Filter           = "Markdown (*.md)|*.md|Text file (*.txt)|*.txt|All files (*.*)|*.*",
+                AddExtension     = true,
+                OverwritePrompt  = true,
+            };
+
+            if (dlg.ShowDialog(this) == true)
+                vm.SaveNewsReport(dlg.FileName);
+        }
+
         // ── Settings dialog ───────────────────────────────────────────────────
 
-        private void Settings_Click(object sender, RoutedEventArgs e)
+        private async void Settings_Click(object sender, RoutedEventArgs e)
         {
+            var vm = DataContext as MainViewModel;
+
+            // Snapshot scanning/analysis settings so we can tell what changed.
+            var snapshot = vm?.CaptureScanSettings();
+
             var settings = new SettingsWindow
             {
                 Owner       = this,
                 DataContext = DataContext,
             };
             settings.ShowDialog();
+
+            // If the user changed scanning/analysis settings, refresh every table
+            // and regenerate the News briefing against the new targets/data.
+            if (vm != null)
+                await vm.RefreshAfterSettingsAsync(snapshot);
         }
     }
 }

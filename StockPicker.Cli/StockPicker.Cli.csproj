@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Cross-platform (Windows + Linux + macOS) command-line interface for
+       running each strategy and generating the News briefing. Depends only on
+       the WPF-free StockPicker.Core. Publish per-RID with a self-contained
+       single-file build, e.g.:
+         dotnet publish -c Release -r win-x64
+         dotnet publish -c Release -r linux-x64 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StockPicker.Cli</RootNamespace>
+    <AssemblyName>stockpicker</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StockPicker.Core\StockPicker.Core.csproj" />
+  </ItemGroup>
+
+</Project>

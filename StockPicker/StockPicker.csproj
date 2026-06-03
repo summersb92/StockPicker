@@ -28,4 +28,8 @@
 
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\StockPicker.Core\StockPicker.Core.csproj" />
+  </ItemGroup>
+
 </Project>
