@@ -39,12 +39,6 @@ namespace StockPicker.Services
         /// </summary>
         void AddToHeld(Recommendation rec);
 
-        /// <summary>
-        /// Adds a manually-entered position, or updates the existing position with the
-        /// same symbol (case-insensitive). Used by the Add/Edit Position dialog.
-        /// </summary>
-        void UpsertHeld(HeldPosition position);
-
         /// <summary>Remove a position from the held list (sold / closed out).</summary>
         void RemoveFromHeld(string symbol);
 

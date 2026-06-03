@@ -1155,6 +1155,10 @@
                                     Command="{Binding CopyNewsCommand}"
                                     Padding="10,4" Margin="0,0,6,0"
                                     ToolTip="Copy the full briefing to the clipboard for pasting into another LLM" />
+                            <Button Content="💾 Save"
+                                    Click="SaveNews_Click"
+                                    Padding="10,4" Margin="0,0,6,0"
+                                    ToolTip="Save the briefing to a Markdown/text file" />
                             <Button Content="↻ Regenerate"
                                     Command="{Binding RegenerateNewsCommand}"
                                     Padding="10,4" Margin="0,0,12,0"
@@ -1271,19 +1275,98 @@
                 <TabItem Header="{Binding PositionsTabHeader}">
                     <Grid>
                         <!-- Empty-state overlay -->
-                        <TextBlock Text="No open positions yet.&#x0A;Use &#x22;Mark as Held&#x22; on a recommendation or &#x22;Move to Positions&#x22; from Watch."
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   TextAlignment="Center" Foreground="#AAA" FontStyle="Italic"
-                                   Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="No open positions yet.&#x0A;Add one manually, or use &#x22;Mark as Held&#x22; / &#x22;Move to Positions&#x22;."
+                                       TextAlignment="Center" Foreground="#AAA" FontStyle="Italic" />
+                            <Button Content="➕  Add Position" Click="AddPosition_Click"
+                                    Padding="12,6" Margin="0,12,0,0" HorizontalAlignment="Center"
+                                    ToolTip="Manually enter a position you hold" />
+                        </StackPanel>
 
                         <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
                             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="➕ Add Position" Click="AddPosition_Click"
+                                        Padding="10,4" Margin="0,0,6,0"
+                                        ToolTip="Manually add a new position" />
+                                <Button Content="✎ Edit" Click="EditPosition_Click"
+                                        Padding="10,4" Margin="0,0,12,0"
+                                        ToolTip="Edit the selected position (or double-click a row)" />
                                 <Button Content="Remove from Positions"
                                         Click="RemoveFromPosition_Click"
                                         Padding="10,4" />
                             </StackPanel>
+
+                            <!-- Performance panel: week / month / quarter / year -->
+                            <Border DockPanel.Dock="Top" Background="#F5F7FA" BorderBrush="#DDE3EA"
+                                    BorderThickness="0,0,0,1" Padding="8,6" Margin="0,0,0,2">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="↻" Width="26" Height="24" Padding="0"
+                                            VerticalAlignment="Top"
+                                            Command="{Binding RefreshPerformanceCommand}"
+                                            ToolTip="Recompute performance from the latest prices" />
+                                    <TextBlock DockPanel.Dock="Right" Text="updating…" VerticalAlignment="Center"
+                                               Margin="0,0,6,0" Foreground="#999" FontSize="10"
+                                               Visibility="{Binding IsPerformanceLoading, Converter={StaticResource BoolToVisibility}}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <!-- Totals -->
+                                        <StackPanel Margin="0,0,18,0" VerticalAlignment="Center">
+                                            <TextBlock Text="Portfolio value" FontSize="10" Foreground="#789" />
+                                            <TextBlock Text="{Binding Performance.MarketValueDisplay}" FontWeight="Bold" FontSize="15" />
+                                            <TextBlock FontSize="11">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#388E3C" />
+                                                        <Setter Property="Text" Value="{Binding Performance.TotalGainPctDisplay}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Performance.IsUp}" Value="False">
+                                                                <Setter Property="Foreground" Value="#D32F2F" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <!-- Trailing-window cards -->
+                                        <ItemsControl ItemsSource="{Binding Performance.Periods}" VerticalAlignment="Center">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,0,8,0" Padding="9,3" Background="White"
+                                                            BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="4" MinWidth="78">
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Label}" FontSize="10" Foreground="#789" />
+                                                            <TextBlock FontWeight="Bold" FontSize="13">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="#388E3C" />
+                                                                        <Setter Property="Text" Value="{Binding PctDisplay}" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsUp}" Value="False">
+                                                                                <Setter Property="Foreground" Value="#D32F2F" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding HasData}" Value="False">
+                                                                                <Setter Property="Foreground" Value="#AAA" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBlock Text="{Binding AmountDisplay}" FontSize="10" Foreground="#888" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
                             <DataGrid ItemsSource="{Binding HeldList}"
                                       SelectedItem="{Binding SelectedHeld}"
+                                      MouseDoubleClick="HeldGrid_DoubleClick"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                                       AlternatingRowBackground="#F7F7F7">
@@ -1611,6 +1694,10 @@
                             <Button Content="📋 Copy"
                                     Command="{Binding CopyNewsCommand}"
                                     Padding="8,4" Margin="0,0,4,0" />
+                            <Button Content="💾 Save"
+                                    Click="SaveNews_Click"
+                                    Padding="8,4" Margin="0,0,4,0"
+                                    ToolTip="Save the briefing to a file" />
                             <Button Content="↻"
                                     Command="{Binding RegenerateNewsCommand}"
                                     Padding="6,4" Margin="0,0,6,0"
@@ -1688,18 +1775,68 @@
                 <!-- Positions -->
                 <TabItem Header="{Binding PositionsTabHeader}">
                     <Grid>
-                        <TextBlock Text="No open positions yet."
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Foreground="#AAA" FontStyle="Italic"
-                                   Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="No open positions yet." TextAlignment="Center"
+                                       Foreground="#AAA" FontStyle="Italic" />
+                            <Button Content="➕ Add Position" Click="AddPosition_Click"
+                                    Padding="10,5" Margin="0,10,0,0" HorizontalAlignment="Center" />
+                        </StackPanel>
                         <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
                             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
+                                <Button Content="➕ Add" Click="AddPosition_Click" Padding="8,4" Margin="0,0,4,0" />
+                                <Button Content="✎ Edit" Click="EditPosition_Click" Padding="8,4" Margin="0,0,8,0"
+                                        ToolTip="Edit the selected position (or double-click a row)" />
                                 <Button Content="Remove"
                                         Click="RemoveFromPosition_Click"
                                         Padding="8,4" />
                             </StackPanel>
+
+                            <!-- Performance strip: week / month / quarter / year -->
+                            <Border DockPanel.Dock="Top" Background="#F5F7FA" BorderBrush="#DDE3EA"
+                                    BorderThickness="0,0,0,1" Padding="6,4" Margin="0,0,0,2">
+                                <WrapPanel Orientation="Horizontal">
+                                    <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="Value" FontSize="9" Foreground="#789" />
+                                        <TextBlock Text="{Binding Performance.MarketValueDisplay}" FontWeight="Bold" FontSize="12" />
+                                    </StackPanel>
+                                    <ItemsControl ItemsSource="{Binding Performance.Periods}" VerticalAlignment="Center">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,6,0" Padding="6,2" Background="White"
+                                                        BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="3" MinWidth="58">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Label}" FontSize="9" Foreground="#789" />
+                                                        <TextBlock FontWeight="Bold" FontSize="11">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="#388E3C" />
+                                                                    <Setter Property="Text" Value="{Binding PctDisplay}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsUp}" Value="False">
+                                                                            <Setter Property="Foreground" Value="#D32F2F" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding HasData}" Value="False">
+                                                                            <Setter Property="Foreground" Value="#AAA" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </WrapPanel>
+                            </Border>
+
                             <DataGrid ItemsSource="{Binding HeldList}"
                                       SelectedItem="{Binding SelectedHeld}"
+                                      MouseDoubleClick="HeldGrid_DoubleClick"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
                                       AlternatingRowBackground="#F7F7F7">

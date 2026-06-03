@@ -145,6 +145,7 @@ namespace StockPicker.ViewModels
             RemoveFromWatchCommand         = new RelayCommand(_ => RemoveSelectedWatch(),  _ => SelectedWatch           != null);
             RemoveFromHeldCommand          = new RelayCommand(_ => RemoveSelectedHeld(),   _ => SelectedHeld            != null);
             PromoteWatchToPositionCommand  = new RelayCommand(_ => PromoteWatchToPosition(), _ => SelectedWatch         != null);
+            RefreshPerformanceCommand      = new RelayCommand(async _ => await RefreshPerformanceAsync(), _ => HeldList.Count > 0 && !IsPerformanceLoading);
             OpenInBrowserCommand           = new RelayCommand(p =>
             {
                 if (p is string sym && !string.IsNullOrEmpty(sym))
@@ -320,6 +321,27 @@ namespace StockPicker.ViewModels
         // ── Empty-state flags ─────────────────────────────────────────────────
         public bool WatchListIsEmpty => WatchList.Count == 0;
         public bool HeldListIsEmpty  => HeldList.Count  == 0;
+
+        // ── Portfolio performance (week / month / quarter / year) ─────────────
+
+        private PortfolioPerformance _performance = PortfolioPerformance.Empty;
+        /// <summary>Reconstructed trailing-window performance of the held positions.</summary>
+        public PortfolioPerformance Performance
+        {
+            get => _performance;
+            private set => SetProperty(ref _performance, value);
+        }
+
+        private bool _isPerformanceLoading;
+        public bool IsPerformanceLoading
+        {
+            get => _isPerformanceLoading;
+            private set
+            {
+                if (SetProperty(ref _isPerformanceLoading, value))
+                    ((RelayCommand)RefreshPerformanceCommand).RaiseCanExecuteChanged();
+            }
+        }
 
         // ── Active selection ──────────────────────────────────────────────────
         public bool HasActiveSelection => _activeSelection != null;
@@ -739,8 +761,9 @@ namespace StockPicker.ViewModels
                     _syncingProfit = false;
                 }
 
-                if (_cachedUniverse != null && !IsBusy)
-                    _ = ApplyStrategyAsync(isScan: false);
+                // The full refresh (tables + News briefing) runs when the Settings
+                // dialog closes — see RefreshAfterSettingsAsync — so we don't re-run
+                // analysis on every spinner click behind the modal dialog.
             }
         }
 
@@ -1010,6 +1033,7 @@ namespace StockPicker.ViewModels
         public ICommand CopyNewsCommand               { get; }
         public ICommand AskAINewsCommand              { get; }
         public ICommand PromoteWatchToPositionCommand { get; }
+        public ICommand RefreshPerformanceCommand     { get; }
         public ICommand OpenInBrowserCommand          { get; }
         public ICommand AskAICommand                  { get; }
 
@@ -1154,6 +1178,10 @@ namespace StockPicker.ViewModels
             // then kick off a live refresh in the background.
             ApplyCachedMarketIndices();
             _ = StartupIndexFetchAsync();
+
+            // Compute portfolio performance in the background (held positions were
+            // loaded from disk in the constructor).
+            _ = RefreshPerformanceAsync();
 
             var diskCache = await _scanCacheService.LoadAsync();
 
@@ -1471,6 +1499,70 @@ namespace StockPicker.ViewModels
             finally
             {
                 IsBusy = false;
+            }
+        }
+
+        // ── Settings-change refresh ───────────────────────────────────────────
+
+        /// <summary>
+        /// Snapshot of the scanning/analysis settings that should trigger a refresh
+        /// when changed. Captured before the Settings dialog opens and compared
+        /// against the live values once it closes.
+        /// </summary>
+        public sealed record ScanSettingsSnapshot(
+            IndexUniverse Index,
+            int UniverseSize,
+            decimal TargetWeekly,
+            string EnabledSources);
+
+        /// <summary>Captures the current scanning/analysis settings for later comparison.</summary>
+        public ScanSettingsSnapshot CaptureScanSettings() => new(
+            SelectedIndex,
+            UniverseSize,
+            TargetProfitMarginPercent,
+            string.Join(",", DataSources.Where(d => d.IsEnabled)
+                                        .Select(d => d.SourceType.ToString())
+                                        .OrderBy(s => s, StringComparer.Ordinal)));
+
+        /// <summary>
+        /// Re-runs the pipeline after the Settings dialog closes, but only when a
+        /// scanning/analysis setting actually changed:
+        ///   • Universe, scan limit, or enabled data sources changed → full network
+        ///     re-scan (refreshes Recommendations, Day Picks, Earnings, and the News
+        ///     briefing from fresh data).
+        ///   • Only the profit target changed → re-run analysis against the cached
+        ///     data and refresh every table + the briefing (no network round-trip).
+        /// Nothing relevant changed → no work is done.
+        /// </summary>
+        public async Task RefreshAfterSettingsAsync(ScanSettingsSnapshot? before)
+        {
+            if (before is null || IsBusy) return;
+
+            var after = CaptureScanSettings();
+
+            bool dataChanged = before.Index          != after.Index
+                            || before.UniverseSize   != after.UniverseSize
+                            || before.EnabledSources != after.EnabledSources;
+
+            bool analysisChanged = before.TargetWeekly != after.TargetWeekly;
+
+            if (dataChanged)
+            {
+                // New universe / limit / sources → the cached data no longer matches
+                // the request, so fetch fresh. RunWeeklyScanAsync → ApplyStrategyAsync
+                // (isScan: true) regenerates all three tables and the News briefing.
+                StatusMessage = "Settings updated — rescanning with the new data set…";
+                await RunWeeklyScanAsync();
+            }
+            else if (analysisChanged && _cachedUniverse != null)
+            {
+                // Targets changed but the underlying data is still valid — re-run
+                // against the cache (no network) and refresh every table + briefing.
+                StatusMessage = "Settings updated — refreshing analysis, picks, and briefing…";
+                await ApplyStrategyAsync(isScan: false);   // Recommendations + News briefing
+                await GenerateDayPicksAsync(force: true);  // Day Picks table
+                await GenerateEarningsPicksAsync();        // Earnings table
+                StatusMessage = "Updated for the new targets.";
             }
         }
 
@@ -2049,6 +2141,34 @@ namespace StockPicker.ViewModels
             StatusMessage = "News briefing copied to clipboard — paste it into any LLM.";
         }
 
+        /// <summary>True when there is a real briefing to save (not the placeholder text).</summary>
+        public bool HasNewsReport =>
+            !string.IsNullOrWhiteSpace(NewsReport) && Recommendations.Count > 0;
+
+        /// <summary>A sensible default file name for saving the briefing.</summary>
+        public string SuggestedNewsFileName =>
+            $"StockPicker-Briefing-{DateTime.Now:yyyy-MM-dd-HHmm}.md";
+
+        /// <summary>
+        /// Writes the current News briefing to <paramref name="path"/>. The View supplies
+        /// the path via a Save dialog; this method owns the write and status update.
+        /// </summary>
+        public void SaveNewsReport(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(NewsReport)) return;
+
+            try
+            {
+                System.IO.File.WriteAllText(path, NewsReport);
+                NewsStatus    = $"Saved to {System.IO.Path.GetFileName(path)} · {DateTime.Now:HH:mm}";
+                StatusMessage = $"News briefing saved to {path}";
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Could not save briefing: {ex.Message}";
+            }
+        }
+
         /// <summary>Copy the briefing and open Claude in the browser.</summary>
         private async Task AskAIAboutNews()
         {
@@ -2266,6 +2386,7 @@ namespace StockPicker.ViewModels
             }
 
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = picks.Count == 1
                 ? $"{picks[0].Symbol} added to Positions."
                 : $"{picks.Count} picks added to Positions.";
@@ -2340,6 +2461,7 @@ namespace StockPicker.ViewModels
             }
 
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = picks.Count == 1
                 ? $"{picks[0].Symbol} added to Positions."
                 : $"{picks.Count} picks added to Positions.";
@@ -2366,6 +2488,7 @@ namespace StockPicker.ViewModels
             rec.SourceTag = SelectedStrategy?.Name ?? "Recommendation";
             _portfolioService.AddToHeld(rec);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = $"{rec.Symbol} added to Positions ({rec.SourceTag}).";
         }
 
@@ -2391,6 +2514,7 @@ namespace StockPicker.ViewModels
             if (SelectedHeld == null) return;
             _portfolioService.RemoveFromHeld(SelectedHeld.Symbol);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
         }
 
         /// <summary>Promote the selected watch item to an open position.</summary>
@@ -2400,7 +2524,52 @@ namespace StockPicker.ViewModels
             _portfolioService.AddToHeld(SelectedWatch);
             _portfolioService.RemoveFromWatch(SelectedWatch.Symbol);
             RefreshPortfolio();
+            _ = RefreshPerformanceAsync();
             StatusMessage = $"{SelectedWatch?.Symbol ?? "Stock"} moved to Positions.";
+        }
+
+        // ── Manual position entry + performance ───────────────────────────────
+
+        /// <summary>
+        /// Adds a new manually-entered position or updates an existing one, then refreshes
+        /// the Positions table, the performance panel, and the News briefing.
+        /// </summary>
+        public async Task UpsertPosition(HeldPosition position)
+        {
+            if (position == null) return;
+
+            _portfolioService.UpsertHeld(position);
+            RefreshPortfolio();                  // reload HeldList + inject cached prices
+            StatusMessage = $"{position.Symbol} saved to Positions.";
+            await RefreshPerformanceAsync();     // recompute W/M/Q/Y
+            await GenerateNewsReportAsync();     // briefing reflects the updated holdings
+        }
+
+        /// <summary>
+        /// Recomputes trailing-window performance for the held positions by pulling each
+        /// symbol's price history. Safe to call with an empty portfolio (clears the panel).
+        /// </summary>
+        public async Task RefreshPerformanceAsync()
+        {
+            if (HeldList.Count == 0)
+            {
+                Performance = PortfolioPerformance.Empty;
+                return;
+            }
+
+            IsPerformanceLoading = true;
+            try
+            {
+                Performance = await PerformanceService.ComputeAsync(HeldList.ToList(), _dataService);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Performance unavailable ({ex.Message}).";
+            }
+            finally
+            {
+                IsPerformanceLoading = false;
+            }
         }
     }
 }

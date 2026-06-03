@@ -67,6 +67,7 @@ namespace StockPicker.Services
             {
                 "mean-reversion" => ScoreMeanReversion(closes, sma20, sma50, rsi14, weekReturn, result),
                 "breakout"       => ScoreBreakout(closes, volumes, sma20, rsi14, volTrend, result),
+                "buy-and-hold"   => ScoreBuyAndHold(closes, sma20, sma50, rsi14, weekReturn, result),
                 _                => ScoreMomentum(weekReturn, sma20, sma50, rsi14, volTrend, result),
             };
 
@@ -286,6 +287,111 @@ namespace StockPicker.Services
             return Math.Round(score, 3);
         }
 
+        /// <summary>
+        /// Buy &amp; Hold: rewards fundamentally-steady names in a durable long-term uptrend —
+        /// price above its long moving average with the trend aligned (SMA20 &gt; SMA50),
+        /// a healthy non-extreme RSI, and steady (rather than parabolic) appreciation.
+        /// Built for multi-month/year holds, so it prizes stability over short-term thrust:
+        /// it deliberately fades blow-off runs and deep selloffs that a long-term holder
+        /// shouldn't initiate into.
+        /// </summary>
+        private static double ScoreBuyAndHold(
+            double[] closes, double? sma20, double? sma50,
+            double rsi14, double weekReturn,
+            AnalysisResult result)
+        {
+            double score = 0;
+            double last  = closes[^1];
+
+            // ── Long-term trend: the core of a buy-and-hold thesis ────────────────
+            if (sma50.HasValue)
+            {
+                double pctFromSma50 = ((last - sma50.Value) / sma50.Value) * 100.0;
+                result.Indicators["PctFromSMA50"] = Math.Round(pctFromSma50, 2);
+
+                if (last > sma50.Value)
+                {
+                    score += 1.5;
+                    result.Signals.Add($"Price {pctFromSma50:+0.##}% above SMA50 ({sma50.Value:F2}) — long-term uptrend");
+                }
+                else
+                {
+                    score -= 1.5;
+                    result.Signals.Add($"Price {pctFromSma50:+0.##;-0.##}% below SMA50 ({sma50.Value:F2}) — long-term downtrend");
+                }
+            }
+
+            // Trend alignment: short MA above long MA confirms a sustained advance.
+            if (sma20.HasValue && sma50.HasValue)
+            {
+                if (sma20.Value > sma50.Value)
+                {
+                    score += 1.0;
+                    result.Signals.Add("SMA20 above SMA50 — trend aligned for accumulation");
+                }
+                else
+                {
+                    score -= 0.8;
+                    result.Signals.Add("SMA20 below SMA50 — trend not yet aligned");
+                }
+            }
+
+            // ── Healthy, non-extreme RSI: steady advance, not a blow-off or a falling knife ──
+            if (rsi14 >= 45 && rsi14 <= 70)
+            {
+                score += 0.6;
+                result.Signals.Add($"RSI14 healthy ({rsi14:F1}) — steady momentum");
+            }
+            else if (rsi14 > 78)
+            {
+                score -= 0.6;
+                result.Signals.Add($"RSI14 overbought ({rsi14:F1}) — poor long-term entry");
+            }
+            else if (rsi14 < 30)
+            {
+                score -= 0.8;
+                result.Signals.Add($"RSI14 oversold ({rsi14:F1}) — possible thesis break");
+            }
+
+            // ── Steady appreciation over the lookback window — reward durable, modest
+            //    gains; fade parabolic spikes and extended declines a long-term holder
+            //    shouldn't chase into. ──
+            if (weekReturn > 0 && weekReturn <= 15.0)
+            {
+                score += 0.5;
+                result.Signals.Add($"Steady appreciation ({weekReturn:+0.##}% over window)");
+            }
+            else if (weekReturn > 25.0)
+            {
+                score -= 0.5;
+                result.Signals.Add($"Parabolic run ({weekReturn:+0.##}%) — wait for a calmer entry");
+            }
+            else if (weekReturn < -10.0)
+            {
+                score -= 0.5;
+                result.Signals.Add($"Extended decline ({weekReturn:+0.##;-0.##}%) — thesis at risk");
+            }
+
+            // Low day-to-day volatility is a plus for a multi-year hold.
+            double vol = Volatility(closes);
+            if (vol > 0)
+            {
+                result.Indicators["Volatility%"] = Math.Round(vol, 2);
+                if (vol < 2.0)
+                {
+                    score += 0.4;
+                    result.Signals.Add($"Low volatility ({vol:F1}%/day) — stable holding");
+                }
+                else if (vol > 4.0)
+                {
+                    score -= 0.3;
+                    result.Signals.Add($"High volatility ({vol:F1}%/day) — choppy for a long hold");
+                }
+            }
+
+            return Math.Round(score, 3);
+        }
+
         // ── Technical indicator math ──────────────────────────────────────────────
 
         /// <summary>Simple moving average of the last <paramref name="period"/> bars.</summary>
@@ -345,6 +451,25 @@ namespace StockPicker.Services
             double baseline = volumes.Skip(volumes.Length - baselineDays) .Average();
 
             return baseline == 0 ? 1.0 : recent / baseline;
+        }
+
+        /// <summary>
+        /// Daily-return volatility as a percent — the standard deviation of
+        /// close-to-close % changes. Returns 0 if there are fewer than 2 bars.
+        /// </summary>
+        private static double Volatility(double[] closes)
+        {
+            if (closes.Length < 2) return 0;
+
+            var returns = new double[closes.Length - 1];
+            for (int i = 1; i < closes.Length; i++)
+                returns[i - 1] = closes[i - 1] == 0 ? 0 : ((closes[i] - closes[i - 1]) / closes[i - 1]) * 100.0;
+
+            double mean = returns.Average();
+            double sumSq = 0;
+            foreach (var r in returns) sumSq += (r - mean) * (r - mean);
+
+            return Math.Sqrt(sumSq / returns.Length);
         }
     }
 }

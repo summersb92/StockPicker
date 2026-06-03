@@ -106,19 +106,6 @@ namespace StockPicker.Services
             SaveAsync();
         }
 
-        public void UpsertHeld(HeldPosition position)
-        {
-            if (position is null || string.IsNullOrWhiteSpace(position.Symbol)) return;
-
-            int idx = _held.FindIndex(
-                h => h.Symbol.Equals(position.Symbol, StringComparison.OrdinalIgnoreCase));
-
-            if (idx >= 0) _held[idx] = position;   // update existing in place
-            else          _held.Add(position);     // add new
-
-            SaveAsync();
-        }
-
         public void RemoveFromHeld(string symbol)
         {
             int removed = _held.RemoveAll(

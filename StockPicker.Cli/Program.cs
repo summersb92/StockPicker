@@ -63,6 +63,8 @@ try
         case "news":       await RunNews();     break;
         case "earnings":   await RunEarnings(); break;
         case "daypicks":   await RunDayPicks(); break;
+        case "performance":
+        case "perf":       await RunPerformance(); break;
         case "help":
         case "--help":
         case "-h":         PrintUsage(); break;
@@ -260,6 +262,53 @@ async Task RunDayPicks()
     }
 }
 
+async Task RunPerformance()
+{
+    var portfolio = new PortfolioService();
+    var held = portfolio.GetHeld().ToList();
+
+    if (held.Count == 0)
+    {
+        Log("No held positions found (portfolio store is empty). Add positions in the desktop app first.");
+        if (json) OutJson(new { positions = 0, periods = Array.Empty<object>() });
+        else Console.WriteLine("No open positions.");
+        return;
+    }
+
+    Log($"Computing performance for {held.Count} positions…");
+    var perf = await PerformanceService.ComputeAsync(held, dataService);
+
+    if (json)
+    {
+        OutJson(new
+        {
+            asOf         = perf.AsOf,
+            positions    = perf.PositionCount,
+            costBasis    = perf.CostBasis,
+            marketValue  = perf.MarketValue,
+            totalGain    = perf.TotalGain,
+            totalGainPct = perf.TotalGainPct,
+            periods = perf.Periods.Select(p => new
+            {
+                p.Label, p.StartDate, p.StartValue, p.CurrentValue,
+                p.ChangeAmount, p.ChangePct, p.PositionsCovered, p.HasData,
+            }),
+        });
+        return;
+    }
+
+    Console.WriteLine($"Portfolio performance — {perf.PositionCount} positions  ({perf.AsOfDisplay})");
+    Console.WriteLine(new string('─', 52));
+    Console.WriteLine($"  Market value : {perf.MarketValueDisplay}");
+    Console.WriteLine($"  Cost basis   : {perf.CostBasisDisplay}");
+    Console.WriteLine($"  Total gain   : {perf.TotalGainDisplay} ({perf.TotalGainPctDisplay})");
+    Console.WriteLine();
+    Console.WriteLine($"  {"PERIOD",-9} {"RETURN",10} {"CHANGE",14}");
+    Console.WriteLine("  " + new string('─', 35));
+    foreach (var p in perf.Periods)
+        Console.WriteLine($"  {p.Label,-9} {p.PctDisplay,10} {p.AmountDisplay,14}");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,6 +413,8 @@ COMMANDS
   earnings   [--days N]           Rank upcoming-earnings candidates.
   daypicks   [--strategy <s>]     Generate intraday picks (momentum|meanreversion|
                                   breakout|earningsplay).
+  performance                     Week/month/quarter/year returns for your held
+                                  positions (reads the saved portfolio).
 
 OPTIONS
   --strategy <id>   Strategy id (see `strategies`). Default: provider default.
