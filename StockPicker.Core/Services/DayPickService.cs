@@ -14,6 +14,7 @@ namespace StockPicker.Services
     {
         private const int    MaxPicks     = 10;
         private const int    MinPicks     = 5;
+        private const double MaxScore     = 9.5;   // theoretical max from all scoring components — used to normalize Confidence
         private const double AtrMultStop  = 1.5;
         private const double AtrMultTarget= 2.5;
 
@@ -178,7 +179,7 @@ namespace StockPicker.Services
             if (score < minScore) return null;
 
             var direction = DirectionFromChange(dayChangePct, gapPct);
-            return BuildPick(stock, lastPrice, atr14, atrPct, gapPct, rsi14, volumeRatio,
+            return BuildPick(stock, lastPrice, quote.DayOpen, atr14, atrPct, gapPct, rsi14, volumeRatio,
                              dayChangePct, direction, score, reasons);
         }
 
@@ -237,7 +238,7 @@ namespace StockPicker.Services
 
             if (score < minScore) return null;
 
-            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+            return BuildPick(stock, lastPrice, quote.DayOpen, atr14, atrPct, 0, rsi14, volumeRatio,
                              dayChangePct, DayPickDirection.Long, score, reasons);
         }
 
@@ -300,7 +301,7 @@ namespace StockPicker.Services
 
             if (score < minScore) return null;
 
-            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+            return BuildPick(stock, lastPrice, quote.DayOpen, atr14, atrPct, 0, rsi14, volumeRatio,
                              dayChangePct, DayPickDirection.Long, score, reasons);
         }
 
@@ -357,14 +358,14 @@ namespace StockPicker.Services
             if (score < minScore) return null;
 
             var direction = DirectionFromChange(dayChangePct, 0);
-            return BuildPick(stock, lastPrice, atr14, atrPct, 0, rsi14, volumeRatio,
+            return BuildPick(stock, lastPrice, quote.DayOpen, atr14, atrPct, 0, rsi14, volumeRatio,
                              dayChangePct, direction, score, reasons);
         }
 
         // ── Shared helpers ────────────────────────────────────────────────────
 
         private static DayPick BuildPick(
-            Stock stock, decimal lastPrice,
+            Stock stock, decimal lastPrice, decimal? dayOpen,
             double atr14, double atrPct, double gapPct,
             double rsi14, double volumeRatio, double dayChangePct,
             DayPickDirection direction, double score, List<string> reasons)
@@ -389,10 +390,12 @@ namespace StockPicker.Services
                 StopLoss      = Math.Round(stopLoss, 2),
                 Target        = Math.Round(target, 2),
                 IntraDayScore = Math.Round(score, 2),
+                Confidence    = Math.Round(Math.Clamp(score / MaxScore, 0.0, 1.0), 3),
                 VolumeRatio   = Math.Round(volumeRatio, 2),
                 GapPct        = Math.Round(gapPct, 2),
                 AtrPct        = Math.Round(atrPct, 2),
                 RSI14         = Math.Round(rsi14, 1),
+                DayOpen       = dayOpen,
                 DayChangePct  = Math.Round(dayChangePct, 2),
                 TriggerReason = reasons.Count > 0 ? string.Join(" | ", reasons) : "Composite signal",
                 GeneratedAt   = DateTime.Now,

@@ -41,5 +41,16 @@ namespace StockPicker.Models
         /// Keyed by symbol; values are DataSourceType enum names.
         /// </summary>
         public Dictionary<string, List<string>> SourcesBySymbol { get; set; } = new();
+
+        /// <summary>
+        /// Enabled and fully configured data sources at the time this cache was built.
+        /// Used to invalidate the cache when provider settings change.
+        /// </summary>
+        public List<string> EnabledSources { get; set; } = new();
+
+        /// <summary>
+        /// Primary quote-summary source used when the cache was built.
+        /// </summary>
+        public string PrimaryQuoteSource { get; set; } = string.Empty;
     }
 }

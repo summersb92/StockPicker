@@ -88,6 +88,12 @@ namespace StockPicker.Services
             a.Indicators.TryGetValue("VolumeTrend",  out var volTrend);
             a.Indicators.TryGetValue("LastClose",    out var lastClose);
 
+            decimal? targetPrice = null;
+            if (lastClose > 0 && action is RecommendationAction.Buy or RecommendationAction.StrongBuy)
+                targetPrice = (decimal)lastClose * (1m + context.TargetProfitMarginPercent / 100m);
+            else if (lastClose > 0 && action is RecommendationAction.Sell or RecommendationAction.StrongSell)
+                targetPrice = (decimal)lastClose * (1m - context.TargetProfitMarginPercent / 100m);
+
             return new Recommendation
             {
                 Symbol        = a.Symbol,
@@ -97,6 +103,11 @@ namespace StockPicker.Services
                 BuyDate       = buy,
                 SellDate      = sell,
                 HoldingPeriod = context.Strategy.HoldingPeriod,
+                TargetPrice   = targetPrice.HasValue ? Math.Round(targetPrice.Value, 2) : null,
+                TargetHitProbability = a.TargetHitProbability,
+                ExpectedDaysToTarget = a.ExpectedDaysToTarget,
+                MedianDaysToTarget   = a.MedianDaysToTarget,
+                TargetHitSampleSize  = a.TargetHitSampleSize,
 
                 // Analysis indicators
                 RSI14         = rsi14    != 0 ? rsi14    : null,
