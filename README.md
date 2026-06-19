@@ -147,6 +147,16 @@ actual fill price and share count.
 
 ## Getting Started
 
+### Easiest path — one double-click (no tools to learn)
+
+**Double-click `setup.cmd`.** It checks for the free Microsoft .NET 8 toolkit
+(installing it for you if it's missing via winget), builds the app, and runs a
+self-test that proves the recommendation engine works. It's safe to re-run any
+time, and it finishes by telling you exactly how to launch the desktop app and
+the command-line tool. Nothing else is required.
+
+### Manual path (Visual Studio)
+
 1. Open `StockPicker.sln` in Visual Studio 2022 (17.8+) with the .NET 8 SDK.
 2. Optional: enable **Alpaca** in Settings if `ALPACA_API_KEY` and `ALPACA_API_SECRET` are already set as Windows environment variables.
 3. Run (F5). Pick a strategy, set a target %, click **Scan This Week**.
