@@ -138,16 +138,16 @@ namespace StockPicker.Models
             Theta.HasValue ? $"{Theta.Value:F2}" : "";
 
         // ── Fundamental display helpers ────────────────────────────────────────
-        // All formatting is in one place so unit assumptions can be flipped easily
-        // once Finnhub units are confirmed on first live run.
+        // Finnhub units verified 2026-06-25 against a live key (see FinnhubFundamentals).
+        // All formatting is kept in one place so a future unit change is a one-line edit.
 
         /// <summary>Cash/MktCap as a percentage string, e.g. "18.3%". Empty when null.</summary>
         public string CashToMktCapDisplay =>
             CashToMktCapPct.HasValue ? $"{CashToMktCapPct.Value:F1}%" : "";
 
         /// <summary>
-        /// Debt-to-equity formatted as a ratio with one decimal place, e.g. "1.5".
-        /// Assumed unit: raw ratio (e.g. 1.5 = 150 % D/E). Empty when null.
+        /// Debt-to-equity formatted as a ratio with two decimal places, e.g. "1.35".
+        /// Verified unit: raw ratio (e.g. 1.35 = 135 % D/E). Empty when null.
         /// </summary>
         public string DebtToEquityDisplay =>
             DebtToEquity.HasValue ? $"{DebtToEquity.Value:F2}" : "";
@@ -161,8 +161,7 @@ namespace StockPicker.Models
 
         /// <summary>
         /// Return on equity as a percentage string, e.g. "15.4%".
-        /// Finnhub roe is assumed to be a fraction (0.15 = 15 %); multiplied by 100 here.
-        /// Update this helper if the first live debug log shows roe is already in percent.
+        /// Verified: Finnhub roe is a fraction (0.41 = 41 %); multiplied by 100 here.
         /// Empty when null.
         /// </summary>
         public string RoeDisplay =>

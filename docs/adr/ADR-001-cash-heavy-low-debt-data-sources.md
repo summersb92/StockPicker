@@ -49,17 +49,15 @@ Mechanism: `_scanGeneration` counter increments at the start of `ApplyStrategyAs
 
 ### Risks & Mitigations
 
-**Risk: Finnhub units are unverified**
+**Resolved: Finnhub units verified (2026-06-25)**
 
-The parser logs raw values via `Debug.WriteLine("[Finnhub units] ...")` on the first successful call to verify assumptions:
-- `DebtToEquity`: assumed to be a raw ratio (e.g., 1.5 = 150% D/E). If Finnhub returns pre-scaled values (e.g., 150 for 150%), thresholds and display logic must be updated.
-- `ReturnOnEquity` / `NetDebtToEquity`: similar units caveat.
+Confirmed against a live free-tier key (AAPL, NVDA, KO, JNJ) using `series.annual`:
+- `totalDebtToEquity` → **raw ratio** (AAPL 1.35 = 135% D/E). No scaling needed.
+- `netDebtToTotalEquity` → **raw ratio**, **negative = net cash** (NVDA −0.01 = net-cash company).
+- `roe` → **fraction** (KO 0.41 = 41% ROE; cross-checks Finnhub's own `roeRfy: 40.74`). Display multiplies ×100.
+- Array order: index `[0]` is the most-recent fiscal year; the parser's explicit `OrderByDescending(period)` is correct regardless of order.
 
-**Mitigation:** All display formatting and threshold logic are centralized:
-- Display helpers: `DebtToEquityDisplay`, `RoeDisplay`, `NetDebtToEquityDisplay` in `Recommendation.cs`
-- Thresholds: named constants in `FundamentalScreen` (`LowDebtMaxDebtToEquity`, `NetCashMaxNetDebtToEquity`)
-
-Once a live Finnhub key is available and the first call is made, the debug output will confirm units. Updating the constants and display helpers is a one-line change per metric.
+All assumptions baked into the code matched reality — **no code changes were required**. Formatting/thresholds remain centralized (display helpers in `Recommendation.cs`; constants in `FundamentalScreen`) so any future Finnhub unit change is a one-line edit. The `Debug.WriteLine("[Finnhub units] ...")` log is retained as a cheap regression check.
 
 **Risk: Finnhub API key missing or exhausted**
 
