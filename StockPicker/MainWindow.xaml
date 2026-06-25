@@ -620,6 +620,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <!-- Search box -->
                                 <Border Grid.Column="0" BorderBrush="#CCC" BorderThickness="1"
@@ -651,6 +652,13 @@
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="10,4"
                                               ToolTip="Show only Buy-rated recommendations" />
+                                <!-- Cash-heavy & low-debt filter -->
+                                <CheckBox Grid.Column="2"
+                                          Content="Cash-heavy &amp; low-debt only"
+                                          IsChecked="{Binding CashHeavyLowDebtOnly, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="8,0,0,0"
+                                          ToolTip="Show only stocks with high cash-to-market-cap and low debt-to-equity" />
                             </Grid>
                         </Border>
 
@@ -815,6 +823,34 @@
                                     Binding="{Binding PriceToBook, StringFormat={}{0:F2}}"
                                     Width="54"
                                     Visibility="{Binding Data.ColPriceToBook.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="Cash/MktCap"
+                                    Binding="{Binding CashToMktCapDisplay}"
+                                    SortMemberPath="CashToMktCapPct"
+                                    Width="78"
+                                    Visibility="{Binding Data.ColCashToMktCap.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="D/E"
+                                    Binding="{Binding DebtToEquityDisplay}"
+                                    SortMemberPath="DebtToEquity"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColDebtToEquity.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="NetDebt/Eq"
+                                    Binding="{Binding NetDebtToEquityDisplay}"
+                                    SortMemberPath="NetDebtToEquity"
+                                    Width="72"
+                                    Visibility="{Binding Data.ColNetDebtToEquity.IsVisible,
+                                                         Source={StaticResource VMProxy},
+                                                         Converter={StaticResource BoolToVisibility}}" />
+                                <DataGridTextColumn Header="ROE"
+                                    Binding="{Binding RoeDisplay}"
+                                    SortMemberPath="ReturnOnEquityPct"
+                                    Width="54"
+                                    Visibility="{Binding Data.ColRoe.IsVisible,
                                                          Source={StaticResource VMProxy},
                                                          Converter={StaticResource BoolToVisibility}}" />
 
@@ -1492,6 +1528,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" BorderBrush="#CCC" BorderThickness="1"
                                         CornerRadius="3" Background="White" Margin="0,0,6,0">
@@ -1520,6 +1557,14 @@
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="6,3" FontSize="11"
                                               ToolTip="Show only Buy-rated recommendations" />
+                                <!-- Cash-heavy & low-debt filter -->
+                                <CheckBox Grid.Column="2"
+                                          Content="Cash-heavy &amp; low-debt only"
+                                          IsChecked="{Binding CashHeavyLowDebtOnly, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="6,0,0,0"
+                                          FontSize="11"
+                                          ToolTip="Show only stocks with high cash-to-market-cap and low debt-to-equity" />
                             </Grid>
                         </Border>
 

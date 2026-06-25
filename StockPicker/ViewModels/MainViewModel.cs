@@ -75,6 +75,12 @@ namespace StockPicker.ViewModels
         private Dictionary<string, List<DataSourceType>> _cachedSourcesBySymbol = new();
         private DataSourceType? _cachedPrimaryQuoteSource;
 
+        // ── Scan generation counter ───────────────────────────────────────────
+        // Incremented at the start of every ApplyStrategyAsync call.
+        // The Finnhub two-pass background task captures the value at launch and
+        // bails early if it has changed (i.e. a newer scan has superseded it).
+        private long _scanGeneration;
+
         // ── Auto-refresh timer ────────────────────────────────────────────────
         private readonly DispatcherTimer _refreshTimer;
 
@@ -218,7 +224,11 @@ namespace StockPicker.ViewModels
             ColSMA20        = new ColumnToggle("SMA20",       false);
             ColSMA50        = new ColumnToggle("SMA50",       false);
             ColVolTrend     = new ColumnToggle("Vol Trend",   false);
-            ColReasoning    = new ColumnToggle("Reasoning",   true);
+            ColReasoning       = new ColumnToggle("Reasoning",   true);
+            ColCashToMktCap    = new ColumnToggle("Cash/MktCap",  false);
+            ColDebtToEquity    = new ColumnToggle("D/E",          false);
+            ColNetDebtToEquity = new ColumnToggle("NetDebt/Eq",   false);
+            ColRoe             = new ColumnToggle("ROE",          false);
 
             AllColumns = new[]
             {
@@ -232,6 +242,7 @@ namespace StockPicker.ViewModels
                 ColBeta, ColDivYield, ColShortRatio,
                 ColIV, ColTheta,
                 ColSMA20, ColSMA50, ColVolTrend,
+                ColCashToMktCap, ColDebtToEquity, ColNetDebtToEquity, ColRoe,
                 ColReasoning,
             };
 
@@ -570,7 +581,11 @@ namespace StockPicker.ViewModels
         public ColumnToggle ColSMA20        { get; }
         public ColumnToggle ColSMA50        { get; }
         public ColumnToggle ColVolTrend     { get; }
-        public ColumnToggle ColReasoning    { get; }
+        public ColumnToggle ColReasoning       { get; }
+        public ColumnToggle ColCashToMktCap    { get; }
+        public ColumnToggle ColDebtToEquity    { get; }
+        public ColumnToggle ColNetDebtToEquity { get; }
+        public ColumnToggle ColRoe             { get; }
 
         public IReadOnlyList<ColumnToggle> AllColumns { get; }
 
@@ -898,6 +913,8 @@ namespace StockPicker.ViewModels
 
             if (_buyOnlyFilter && rec.Action != RecommendationAction.Buy && rec.Action != RecommendationAction.StrongBuy) return false;
 
+            if (_cashHeavyLowDebtOnly && !FundamentalScreen.IsCashHeavyLowDebt(rec)) return false;
+
             var q = _searchText?.Trim();
             if (!string.IsNullOrEmpty(q))
             {
@@ -946,6 +963,23 @@ namespace StockPicker.ViewModels
             set
             {
                 if (SetProperty(ref _buyOnlyFilter, value))
+                    RecommendationsView?.Refresh();
+            }
+        }
+
+        private bool _cashHeavyLowDebtOnly;
+        /// <summary>
+        /// When true, the recommendations grid shows only stocks that pass
+        /// <see cref="StockPicker.Services.FundamentalScreen.IsCashHeavyLowDebt"/>:
+        /// cash ≥ 10 % of market cap AND D/E ≤ 1.0 (degrades to cash-only when Finnhub
+        /// data is unavailable).
+        /// </summary>
+        public bool CashHeavyLowDebtOnly
+        {
+            get => _cashHeavyLowDebtOnly;
+            set
+            {
+                if (SetProperty(ref _cashHeavyLowDebtOnly, value))
                     RecommendationsView?.Refresh();
             }
         }
@@ -1665,6 +1699,10 @@ namespace StockPicker.ViewModels
             if (_cachedUniverse == null || _cachedHistory == null || _cachedSummaries == null)
                 return;
 
+            // Capture the generation token before any async work so the Finnhub background
+            // pass can detect that a newer scan has superseded it.
+            var scanGen = System.Threading.Interlocked.Increment(ref _scanGeneration);
+
             var context = new ScanContext
             {
                 Strategy                  = SelectedStrategy,
@@ -1724,6 +1762,7 @@ namespace StockPicker.ViewModels
                     rec.ShortRatio         = qs.ShortRatio;
                     rec.ImpliedVolatility  = qs.ImpliedVolatility;
                     rec.Theta              = qs.Theta;
+                    rec.TotalCash          = qs.TotalCash;
                 }
                 else if (_cachedNameLookup != null &&
                          _cachedNameLookup.TryGetValue(rec.Symbol, out var info))
@@ -1739,8 +1778,80 @@ namespace StockPicker.ViewModels
                     rec.ContributingSources = new System.Collections.Generic.List<DataSourceType>(sources);
             }
 
+            // Apply cash-strength confidence tilt using Yahoo cash data (available for all recs).
+            // Finnhub D/E is intentionally excluded here — it is only populated for the top-20
+            // in the background two-pass and would unfairly bias partial rows if used in ranking.
+            FundamentalScreen.ApplyCashStrengthTilt(recs);
+
+            // Re-sort after tilt so ranking reflects the adjusted confidence scores.
+            recs = recs
+                .OrderByDescending(r => r.Confidence)
+                .ThenBy(r => r.ActionSortOrder)
+                .ThenBy(r => r.Symbol)
+                .ToList();
+
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
+
+            // ── Finnhub two-pass enrichment ───────────────────────────────────────
+            // Fire a background task that fetches D/E, net-D/E, and ROE for the top-20
+            // recommendations from Finnhub, then patches those fields and redraws the grid.
+            // This is intentionally fire-and-forget: the grid is already usable from the
+            // first ReplaceAll above.  If a newer scan starts (_scanGeneration changes),
+            // this pass bails to avoid clobbering fresh results.
+            var finnhubDs = DataSources.FirstOrDefault(
+                d => d.SourceType == DataSourceType.Finnhub && d.IsEnabled &&
+                     !string.IsNullOrWhiteSpace(d.ApiKey));
+
+            if (finnhubDs != null)
+            {
+                var top20 = recs.Take(20).ToList();
+                var top20Syms = top20.Select(r => r.Symbol).ToList();
+                var finnhubSvc = new FinnhubStockDataService(finnhubDs.ApiKey);
+                var capturedGen = scanGen;
+                var capturedRecs = recs; // same list that was handed to ReplaceAll
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var fundamentals = await finnhubSvc.GetFundamentalsBatchAsync(top20Syms);
+
+                        // Bail if a newer scan has already run.
+                        if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
+                        if (fundamentals.Count == 0) return;
+
+                        foreach (var rec in top20)
+                        {
+                            if (fundamentals.TryGetValue(rec.Symbol, out var f))
+                            {
+                                rec.DebtToEquity    = f.DebtToEquity;
+                                rec.NetDebtToEquity = f.NetDebtToEquity;
+                                rec.ReturnOnEquityPct = f.ReturnOnEquity;
+                            }
+                        }
+
+                        // Bail again in case a scan started while we were in foreach.
+                        if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
+
+                        // Refresh the grid on the UI thread so WPF bindings update.
+                        // InvokeAsync instead of Invoke avoids blocking the thread-pool thread
+                        // on the UI thread, eliminating a latent deadlock risk.
+                        var disp = System.Windows.Application.Current?.Dispatcher;
+                        if (disp != null)
+                            await disp.InvokeAsync(() =>
+                            {
+                                if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
+                                Recommendations.ReplaceAll(capturedRecs);
+                            });
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Finnhub two-pass] background enrichment error: {ex.Message}");
+                    }
+                });
+            }
 
             // Update live prices on watch and held items from the fresh summary cache
             // BEFORE building the briefing, so the positions section reflects current P/L.

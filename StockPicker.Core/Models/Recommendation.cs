@@ -90,6 +90,39 @@ namespace StockPicker.Models
         public double?  DividendYieldPct { get; set; }  // already in %
         public double?  ShortRatio      { get; set; }
 
+        // ── Cash / fundamental data (Yahoo + Finnhub two-pass) ───────────────
+        /// <summary>Total cash and equivalents on the balance sheet (from Yahoo Finance totalCash).</summary>
+        public decimal? TotalCash         { get; set; }
+
+        /// <summary>
+        /// Total debt to equity ratio (from Finnhub series.annual.totalDebtToEquity).
+        /// Units unverified — assumed ratio (e.g. 1.5 = 150 % D/E).
+        /// Populated in the background Finnhub two-pass for the top 20 recommendations only.
+        /// </summary>
+        public double?  DebtToEquity      { get; set; }
+
+        /// <summary>
+        /// Net debt to total equity (from Finnhub series.annual.netDebtToTotalEquity).
+        /// Negative = net cash position.  Same two-pass population caveat as DebtToEquity.
+        /// </summary>
+        public double?  NetDebtToEquity   { get; set; }
+
+        /// <summary>
+        /// Return on equity stored as a raw Finnhub fraction (e.g. 0.15 = 15 % ROE).
+        /// Display helper multiplies by 100 so the format string is in one place.
+        /// Same two-pass population caveat as DebtToEquity.
+        /// </summary>
+        public double?  ReturnOnEquityPct { get; set; }
+
+        /// <summary>
+        /// Cash as a percentage of market cap.  Null when either TotalCash or MarketCap
+        /// is unavailable.  Used by <see cref="StockPicker.Services.FundamentalScreen"/>.
+        /// </summary>
+        public double? CashToMktCapPct =>
+            (TotalCash.HasValue && MarketCap.HasValue && MarketCap.Value != 0)
+                ? (double)TotalCash.Value / MarketCap.Value * 100.0
+                : (double?)null;
+
         // ── Options Greeks ────────────────────────────────────────────────────
         /// <summary>Implied volatility of the near-term ATM option (fraction, e.g. 0.30 = 30%).</summary>
         public double?  ImpliedVolatility { get; set; }
@@ -103,6 +136,37 @@ namespace StockPicker.Models
         /// <summary>Theta formatted with two decimal places, e.g. "-0.08".</summary>
         public string ThetaDisplay =>
             Theta.HasValue ? $"{Theta.Value:F2}" : "";
+
+        // ── Fundamental display helpers ────────────────────────────────────────
+        // All formatting is in one place so unit assumptions can be flipped easily
+        // once Finnhub units are confirmed on first live run.
+
+        /// <summary>Cash/MktCap as a percentage string, e.g. "18.3%". Empty when null.</summary>
+        public string CashToMktCapDisplay =>
+            CashToMktCapPct.HasValue ? $"{CashToMktCapPct.Value:F1}%" : "";
+
+        /// <summary>
+        /// Debt-to-equity formatted as a ratio with one decimal place, e.g. "1.5".
+        /// Assumed unit: raw ratio (e.g. 1.5 = 150 % D/E). Empty when null.
+        /// </summary>
+        public string DebtToEquityDisplay =>
+            DebtToEquity.HasValue ? $"{DebtToEquity.Value:F2}" : "";
+
+        /// <summary>
+        /// Net debt-to-equity formatted as a ratio with two decimal places, e.g. "-0.20".
+        /// Negative values indicate a net cash position. Empty when null.
+        /// </summary>
+        public string NetDebtToEquityDisplay =>
+            NetDebtToEquity.HasValue ? $"{NetDebtToEquity.Value:F2}" : "";
+
+        /// <summary>
+        /// Return on equity as a percentage string, e.g. "15.4%".
+        /// Finnhub roe is assumed to be a fraction (0.15 = 15 %); multiplied by 100 here.
+        /// Update this helper if the first live debug log shows roe is already in percent.
+        /// Empty when null.
+        /// </summary>
+        public string RoeDisplay =>
+            ReturnOnEquityPct.HasValue ? $"{ReturnOnEquityPct.Value * 100.0:F1}%" : "";
 
         // ── HeldPosition compatibility (used by Details pane shared template) ─
         public decimal? EntryPrice      { get; set; }

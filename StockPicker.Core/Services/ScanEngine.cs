@@ -212,6 +212,7 @@ namespace StockPicker.Services
                 rec.ShortRatio       = qs.ShortRatio;
                 rec.ImpliedVolatility = qs.ImpliedVolatility;
                 rec.Theta             = qs.Theta;
+                rec.TotalCash         = qs.TotalCash;
             }
             else if (data.NameLookup.TryGetValue(rec.Symbol, out var info))
             {

@@ -205,8 +205,21 @@ namespace StockPicker.Services
             if (string.IsNullOrWhiteSpace(symbolList)) return result;
 
             var crumb = await EnsureCrumbAsync();
+
+            // Explicitly enumerate every field we consume so adding totalCash does not
+            // silently drop any existing field if Yahoo ever tightens field filtering.
+            const string fields =
+                "longName,shortName,regularMarketPrice,regularMarketPreviousClose," +
+                "regularMarketOpen,regularMarketDayHigh,regularMarketDayLow," +
+                "regularMarketChange,regularMarketChangePercent,regularMarketVolume," +
+                "averageVolume,marketCap,trailingPE,forwardPE,epsTrailingTwelveMonths," +
+                "priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,beta,shortRatio," +
+                "trailingAnnualDividendYield,52WeekChange,impliedVolatility," +
+                "earningsTimestamp,totalCash";
+
             var url = $"https://query2.finance.yahoo.com/v7/finance/quote" +
                       $"?symbols={symbolList}" +
+                      $"&fields={fields}" +
                       (crumb != null ? $"&crumb={Uri.EscapeDataString(crumb)}" : "");
 
             try
@@ -248,6 +261,9 @@ namespace StockPicker.Services
                         Beta            = GetDouble(item,  "beta"),
                         ShortRatio      = GetDouble(item,  "shortRatio"),
                     };
+
+                    // totalCash is a flat number (e.g. 2.4e10 = $24B cash on balance sheet)
+                    q.TotalCash = GetDecimal(item, "totalCash");
 
                     // dividendYield from Yahoo is a fraction (e.g. 0.0055 = 0.55%); convert to %
                     var rawYield = GetDouble(item, "trailingAnnualDividendYield");
