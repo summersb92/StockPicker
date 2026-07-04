@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using StockPicker.Models;
 
@@ -13,6 +14,21 @@ namespace StockPicker.Services
     /// </remarks>
     public interface IPortfolioService
     {
+        /// <summary>
+        /// Raised when saving the portfolio file fails at runtime (disk full,
+        /// permissions). The string is a short human-readable message.
+        /// Subscribers should surface it — a silent persistence failure means the
+        /// user believes a trade was recorded when it wasn't.
+        /// </summary>
+        event Action<string>? PersistenceError;
+
+        /// <summary>
+        /// Non-null when the portfolio file existed at startup but could not be
+        /// parsed. The corrupt file is backed up alongside the original (never
+        /// silently discarded); this message says where.
+        /// </summary>
+        string? StartupLoadError { get; }
+
         // --- Watch list ---
 
         /// <summary>Snapshot of the current watch list.</summary>
@@ -47,6 +63,33 @@ namespace StockPicker.Services
 
         /// <summary>Remove a position from the held list (sold / closed out).</summary>
         void RemoveFromHeld(string symbol);
+
+        /// <summary>
+        /// Sells a held position (full or partial) at <paramref name="sellPrice"/>: credits the
+        /// net proceeds (gross less any repaid margin loan + accrued interest) to cash, records a
+        /// Sell transaction with realized gain, and removes or reduces the position. Returns the
+        /// recorded transaction, or null if the symbol isn't held.
+        /// </summary>
+        Transaction? SellHeld(string symbol, decimal sellPrice, int shares, System.DateTime date);
+
+        // --- Cash ---
+
+        /// <summary>Un-invested cash on hand, counted toward total portfolio value.</summary>
+        decimal GetCash();
+
+        /// <summary>Sets the cash balance directly (negative values clamped to zero). Does NOT log a transaction.</summary>
+        void SetCash(decimal amount);
+
+        /// <summary>Adds cash and records a Deposit transaction.</summary>
+        void DepositCash(decimal amount, System.DateTime date, string note);
+
+        /// <summary>Removes cash (clamped to the available balance) and records a Withdrawal transaction.</summary>
+        void WithdrawCash(decimal amount, System.DateTime date, string note);
+
+        // --- Ledger ---
+
+        /// <summary>Full transaction ledger (chronological): buys, sells, deposits, withdrawals.</summary>
+        IReadOnlyList<Transaction> GetTransactions();
 
         // --- Daily picks cache ---
 

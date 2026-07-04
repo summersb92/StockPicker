@@ -16,6 +16,16 @@ namespace StockPicker.Services
     /// It is not a money-weighted return — the app keeps no record of past buys/sells — so a
     /// position entered mid-window is still valued from the window start. Cost basis / total
     /// gain, by contrast, use each position's actual entry price.
+    ///
+    /// Each window is valued from the latest close at or before the window start. When we hold
+    /// LESS history than a window's length, that window CLAMPS to the earliest available close
+    /// instead of dropping out — so, e.g., with only a month of price history the Quarter and
+    /// Year returns both equal the Month return rather than showing "n/a".
+    ///
+    /// Margin positions are valued on EQUITY: each window subtracts the margin loan from both
+    /// ends and the interest accrued during the window from the current end, so the return is
+    /// leveraged and carry-net (a 2× position that moved +30% shows ~+60% less carry). Cash
+    /// positions have no loan or interest, so they are unaffected.
     /// </summary>
     public static class PerformanceService
     {
@@ -34,6 +44,7 @@ namespace StockPicker.Services
         public static async Task<PortfolioPerformance> ComputeAsync(
             IReadOnlyList<HeldPosition> held,
             IStockDataService data,
+            decimal cash = 0m,
             DateTime? asOf = null,
             int maxConcurrency = 8,
             CancellationToken ct = default)
@@ -41,7 +52,7 @@ namespace StockPicker.Services
             var today     = (asOf ?? DateTime.Today).Date;
             var positions = held.Where(h => h.ShareCount > 0).ToList();
             if (positions.Count == 0)
-                return PortfolioPerformance.Empty;
+                return new PortfolioPerformance { AsOf = DateTime.Now, CashBalance = cash };
 
             // Two-week margin so we can resolve a close on/before each window start.
             var from = today.AddYears(-1).AddDays(-14);
@@ -68,10 +79,14 @@ namespace StockPicker.Services
                 await Task.WhenAll(tasks);
             }
 
-            // Cost basis (actual entry) and current market value (latest close, fallback to entry).
-            decimal costBasis = positions.Sum(p => p.EntryPrice * p.ShareCount);
+            // Cost basis = the investor's own equity (== full cost for cash positions).
+            // Market value = current equity value: holdings marked to market, less any
+            // outstanding margin loan and the interest accrued on it. For cash positions
+            // BorrowedAmount and InterestAccrued are zero, so this is just price × shares.
+            decimal costBasis = positions.Sum(p => p.EquityInvested);
             decimal marketValue = positions.Sum(p =>
-                (LatestClose(histories, p.Symbol) ?? p.LastPrice ?? p.EntryPrice) * p.ShareCount);
+                (LatestClose(histories, p.Symbol) ?? p.LastPrice ?? p.EntryPrice) * p.ShareCount
+                - p.BorrowedAmount - p.InterestAccrued);
 
             var periods = new List<PerformancePeriod>(Windows.Length);
             foreach (var (label, startFn) in Windows)
@@ -86,8 +101,13 @@ namespace StockPicker.Services
                     var curClose   = LatestClose(histories, p.Symbol);
                     if (startClose is decimal s && curClose is decimal c)
                     {
-                        startVal += s * p.ShareCount;
-                        curVal   += c * p.ShareCount;
+                        // Value each window on the EQUITY in the position, not the gross holding:
+                        // subtract the (constant) margin loan from both ends and the interest that
+                        // accrued during the window from the current end. For a cash position the
+                        // loan and interest are zero, so this is just price × shares — unchanged.
+                        decimal borrowed = p.BorrowedAmount;
+                        startVal += s * p.ShareCount - borrowed;
+                        curVal   += c * p.ShareCount - borrowed - InterestOverWindow(p, ds, today);
                         covered++;
                     }
                 }
@@ -109,6 +129,7 @@ namespace StockPicker.Services
                 PositionCount = positions.Count,
                 CostBasis     = costBasis,
                 MarketValue   = marketValue,
+                CashBalance   = cash,
                 Periods       = periods,
             };
         }
@@ -118,7 +139,33 @@ namespace StockPicker.Services
             => histories.TryGetValue(symbol, out var bars) && bars.Count > 0
                 ? bars[^1].Close : (decimal?)null;
 
-        /// <summary>Most recent close at or before <paramref name="date"/>; null if none. Bars are ascending.</summary>
+        /// <summary>
+        /// Margin interest accrued on a position during a trailing window, prorated to the days
+        /// the position was actually held inside that window (from the later of the window start
+        /// and the entry date, through today). Zero for cash positions.
+        /// </summary>
+        private static decimal InterestOverWindow(HeldPosition p, DateTime windowStart, DateTime today)
+        {
+            if (!p.BoughtOnMargin || p.MarginInterestRatePercent <= 0m || p.BorrowedAmount <= 0m)
+                return 0m;
+
+            var entry = p.EntryDate == default ? today.Date : p.EntryDate.Date;
+            var from  = entry > windowStart.Date ? entry : windowStart.Date;
+            double days = (today.Date - from).TotalDays;
+            if (days <= 0) return 0m;
+
+            return p.BorrowedAmount * (p.MarginInterestRatePercent / 100m) * (decimal)(days / 365.0);
+        }
+
+        /// <summary>
+        /// Close to value a window from. Normally the most recent close at or before
+        /// <paramref name="date"/>. If the window starts before our earliest available bar
+        /// (i.e. we hold less history than the window length), it CLAMPS to the earliest
+        /// close so the window still produces a return — e.g. with only a month of history,
+        /// the Quarter and Year windows clamp to that month's start and therefore equal the
+        /// Month return rather than dropping out. Returns null only when there are no bars.
+        /// Bars are ascending by timestamp.
+        /// </summary>
         private static decimal? CloseOnOrBefore(
             Dictionary<string, IReadOnlyList<StockQuote>> histories, string symbol, DateTime date)
         {
@@ -131,7 +178,9 @@ namespace StockPicker.Services
                 if (b.Timestamp.Date <= date.Date) best = b.Close;
                 else break;
             }
-            return best;
+
+            // No bar on/before the window start → clamp to the earliest bar we have.
+            return best ?? bars[0].Close;
         }
     }
 }

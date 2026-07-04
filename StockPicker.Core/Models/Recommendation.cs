@@ -21,6 +21,12 @@ namespace StockPicker.Models
         // ── Signal ────────────────────────────────────────────────────────────
         public RecommendationAction Action     { get; set; }
         public double               Confidence { get; set; }   // 0.0–1.0
+        /// <summary>
+        /// Raw strategy score the action was derived from. Unlike <see cref="Confidence"/>
+        /// (which saturates at 1.0 once |score| ≥ 3), the raw score keeps discriminating
+        /// between strong picks — use it for ranking, never the saturated confidence.
+        /// </summary>
+        public double               Score      { get; set; }
         public string               Reasoning  { get; set; } = string.Empty;
 
         /// <summary>
@@ -95,6 +101,27 @@ namespace StockPicker.Models
         public double?  ImpliedVolatility { get; set; }
         /// <summary>Theta — time-decay cost per day in $ for the near-term ATM option.</summary>
         public double?  Theta             { get; set; }
+
+        // ── Upcoming catalyst ─────────────────────────────────────────────────
+        /// <summary>Next scheduled earnings date, when the data source reports one.</summary>
+        public DateTime? NextEarningsDate { get; set; }
+
+        /// <summary>Calendar days until the next earnings report; null when unknown or past.</summary>
+        public int? DaysToEarnings =>
+            NextEarningsDate.HasValue && NextEarningsDate.Value.Date >= DateTime.Today
+                ? (NextEarningsDate.Value.Date - DateTime.Today).Days
+                : (int?)null;
+
+        /// <summary>
+        /// Position of the current price within the 52-week range (0 = at the low,
+        /// 100 = at the high). Null when the range or price is unavailable.
+        /// </summary>
+        public double? Week52PositionPct =>
+            (LastPrice.HasValue && Week52High.HasValue && Week52Low.HasValue &&
+             Week52High.Value > Week52Low.Value)
+                ? (double)((LastPrice.Value - Week52Low.Value) /
+                           (Week52High.Value - Week52Low.Value)) * 100.0
+                : null;
 
         /// <summary>Implied volatility formatted as a percentage string, e.g. "32.5%".</summary>
         public string ImpliedVolatilityPctDisplay =>

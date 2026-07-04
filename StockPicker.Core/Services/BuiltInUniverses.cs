@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using StockPicker.Models;
 
 namespace StockPicker.Services
@@ -9,16 +10,27 @@ namespace StockPicker.Services
     /// Last verified: April 2025.
     /// Index memberships change periodically; if precision matters, verify against
     /// the official index provider (S&amp;P Global, Nasdaq, etc.) and update this file.
+    ///
+    /// Symbols are canonicalized via <see cref="SymbolNormalizer"/> (dot → dash) so
+    /// class shares like BRK.B merge correctly with data keyed by Yahoo's BRK-B form.
     /// </summary>
     public static class BuiltInUniverses
     {
+        /// <summary>Canonicalize each entry's symbol in place and return the list.</summary>
+        private static IReadOnlyList<Stock> Canonical(List<Stock> stocks)
+        {
+            foreach (var s in stocks)
+                s.Symbol = SymbolNormalizer.ToCanonical(s.Symbol);
+            return stocks;
+        }
+
         // ── Dow Jones Industrial Average (DJIA) — 30 components ──────────────────
 
         /// <summary>
         /// DJIA constituents as of April 2025.
         /// Notable recent changes: AMZN replaced WBA (Feb 2024), NVDA replaced INTC (Nov 2024).
         /// </summary>
-        public static IReadOnlyList<Stock> Dow30 { get; } = new List<Stock>
+        public static IReadOnlyList<Stock> Dow30 { get; } = Canonical(new List<Stock>
         {
             new() { Symbol = "AAPL",  Name = "Apple Inc.",                    Sector = "Technology",             Exchange = "NASDAQ" },
             new() { Symbol = "AMGN",  Name = "Amgen Inc.",                    Sector = "Healthcare",             Exchange = "NASDAQ" },
@@ -50,7 +62,7 @@ namespace StockPicker.Services
             new() { Symbol = "UNH",   Name = "UnitedHealth Group Inc.",       Sector = "Healthcare",             Exchange = "NYSE"   },
             new() { Symbol = "V",     Name = "Visa Inc.",                     Sector = "Financials",             Exchange = "NYSE"   },
             new() { Symbol = "WMT",   Name = "Walmart Inc.",                  Sector = "Consumer Staples",       Exchange = "NYSE"   },
-        };
+        });
 
         // ── S&P 100 — 100 largest S&P 500 companies by market cap ────────────────
 
@@ -58,7 +70,7 @@ namespace StockPicker.Services
         /// S&amp;P 100 constituents as of April 2025 (OEX index components).
         /// Ranked approximately by market capitalisation; exact rank varies daily.
         /// </summary>
-        public static IReadOnlyList<Stock> SP100 { get; } = new List<Stock>
+        public static IReadOnlyList<Stock> SP100 { get; } = Canonical(new List<Stock>
         {
             new() { Symbol = "AAPL",  Name = "Apple Inc.",                      Sector = "Technology",             Exchange = "NASDAQ" },
             new() { Symbol = "MSFT",  Name = "Microsoft Corp.",                 Sector = "Technology",             Exchange = "NASDAQ" },
@@ -159,7 +171,7 @@ namespace StockPicker.Services
             new() { Symbol = "MDLZ",  Name = "Mondelez International Inc.",     Sector = "Consumer Staples",       Exchange = "NASDAQ" },
             new() { Symbol = "HUM",   Name = "Humana Inc.",                     Sector = "Healthcare",             Exchange = "NYSE"   },
             new() { Symbol = "OKE",   Name = "ONEOK Inc.",                      Sector = "Energy",                 Exchange = "NYSE"   },
-        };
+        });
 
         // ── NASDAQ-100 (NDX) — 100 largest non-financial NASDAQ companies ─────────
 
@@ -167,7 +179,7 @@ namespace StockPicker.Services
         /// NASDAQ-100 constituents as of April 2025.
         /// Rebalanced quarterly by Nasdaq Inc.; dominated by technology and growth sectors.
         /// </summary>
-        public static IReadOnlyList<Stock> Nasdaq100 { get; } = new List<Stock>
+        public static IReadOnlyList<Stock> Nasdaq100 { get; } = Canonical(new List<Stock>
         {
             new() { Symbol = "AAPL",  Name = "Apple Inc.",                       Sector = "Technology",             Exchange = "NASDAQ" },
             new() { Symbol = "MSFT",  Name = "Microsoft Corp.",                  Sector = "Technology",             Exchange = "NASDAQ" },
@@ -268,6 +280,6 @@ namespace StockPicker.Services
             new() { Symbol = "MSTR",  Name = "MicroStrategy Inc.",               Sector = "Technology",             Exchange = "NASDAQ" },
             new() { Symbol = "AXON",  Name = "Axon Enterprise Inc.",             Sector = "Industrials",            Exchange = "NASDAQ" },
             new() { Symbol = "NDAQ",  Name = "Nasdaq Inc.",                      Sector = "Financials",             Exchange = "NASDAQ" },
-        };
+        });
     }
 }

@@ -18,6 +18,13 @@ namespace StockPicker.Models
         public decimal Close { get; set; }
         public long Volume { get; set; }
 
+        /// <summary>
+        /// True when the prices are split/dividend-adjusted (Tiingo adj* fields,
+        /// Polygon adjusted=true). Raw and adjusted bars must never be averaged
+        /// together — after a split they differ by the split ratio.
+        /// </summary>
+        public bool IsAdjusted { get; set; }
+
         /// <summary>Convenience: close - open.</summary>
         public decimal Change => Close - Open;
 

@@ -81,5 +81,15 @@ namespace StockPicker.Models
 
         /// <summary>Assumed annualized margin interest rate %. Default 12.5%.</summary>
         public decimal EarningsMarginRatePct { get; set; } = 12.5m;
+
+        // ── News briefing composition ──────────────────────────────────────────
+        public bool NewsIncludePositions   { get; set; } = true;
+        public bool NewsIncludeBestAny     { get; set; } = true;
+        public bool NewsIncludePerStrategy { get; set; } = true;
+        public bool NewsIncludeEarnings    { get; set; } = true;
+        public bool NewsIncludeTopPicks    { get; set; } = true;
+
+        /// <summary>Analysis-request preset appended to the briefing ("Full", "Risk review", …).</summary>
+        public string NewsAnalysisPreset { get; set; } = "Full";
     }
 }

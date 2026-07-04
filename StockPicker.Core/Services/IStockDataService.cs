@@ -36,7 +36,7 @@ namespace StockPicker.Services
         Task<Dictionary<string, QuoteSummary>> GetQuoteSummariesAsync(IEnumerable<string> symbols);
 
         /// <summary>
-        /// Fetch weekly OHLCV bars for a symbol for the past <paramref name="weeks"/> weeks.
+        /// Fetch weekly OHLCV bars for a symbol covering <paramref name="range"/>.
         /// Returns an empty list if data is unavailable.
         /// </summary>
         Task<IReadOnlyList<WeeklyBar>> GetWeeklyBarsAsync(string symbol, ChartRange range = ChartRange.Year, System.Threading.CancellationToken ct = default);

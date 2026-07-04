@@ -98,6 +98,7 @@ namespace StockPicker.Services
             {
                 Symbol        = a.Symbol,
                 Action        = action,
+                Score         = Math.Round(a.Score, 2),
                 Confidence    = Math.Min(1.0, Math.Abs(a.Score) / 3.0),
                 Reasoning     = reasoning,
                 BuyDate       = buy,

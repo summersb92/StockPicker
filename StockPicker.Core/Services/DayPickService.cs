@@ -430,33 +430,12 @@ namespace StockPicker.Services
             return (closes, highs, lows, volumes, opens);
         }
 
+        // Delegated to the shared Wilder implementations so day picks, analysis, and
+        // earnings all report identical indicator values for the same bars.
         private static double ComputeAtr(double[] closes, double[] highs, double[] lows, int period)
-        {
-            if (closes.Length < 2) return 0;
-            int n = Math.Min(period, closes.Length - 1);
-            double sum = 0;
-            for (int i = closes.Length - n; i < closes.Length; i++)
-            {
-                double tr = Math.Max(highs[i] - lows[i],
-                            Math.Max(Math.Abs(highs[i] - closes[i - 1]),
-                                     Math.Abs(lows[i]  - closes[i - 1])));
-                sum += tr;
-            }
-            return sum / n;
-        }
+            => Indicators.AtrWilder(closes, highs, lows, period);
 
         private static double ComputeRsi(double[] closes, int period)
-        {
-            if (closes.Length < period + 1) return 50;
-            double gain = 0, loss = 0;
-            for (int i = closes.Length - period; i < closes.Length; i++)
-            {
-                double d = closes[i] - closes[i - 1];
-                if (d >= 0) gain += d; else loss -= d;
-            }
-            if (loss == 0) return 100;
-            double rs = (gain / period) / (loss / period);
-            return 100.0 - (100.0 / (1.0 + rs));
-        }
+            => Indicators.RsiWilder(closes, period);
     }
 }

@@ -51,6 +51,26 @@ namespace StockPicker.Services
                 Description = "Accumulate fundamentally strong names and hold for " +
                               "years — exit only on thesis break.",
                 HoldingPeriod = HoldingPeriod.Long
+            },
+            new()
+            {
+                Id = "value",
+                Name = "Value (Long)",
+                Description = "Buys statistically cheap stocks: low P/E and P/B with " +
+                              "positive earnings and an income cushion. Fundamental, " +
+                              "not price-action — complements the technical strategies. " +
+                              "Uses TODAY's fundamentals, so it is excluded from " +
+                              "point-in-time backtests.",
+                HoldingPeriod = HoldingPeriod.Long
+            },
+            new()
+            {
+                Id = "52w-high",
+                Name = "52-Week High (Short)",
+                Description = "Buys strength near the 52-week high — a well-documented " +
+                              "momentum anomaly (George & Hwang 2004): stocks within a " +
+                              "few percent of their yearly high tend to keep outperforming.",
+                HoldingPeriod = HoldingPeriod.Short
             }
         };
 

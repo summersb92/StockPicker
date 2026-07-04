@@ -81,8 +81,11 @@ namespace StockPicker.Services
 
         /// <summary>
         /// Parses the S&amp;P 500 CSV (Symbol, Name, Sector).
-        /// Handles names that contain commas by treating the last column as Sector
-        /// and joining any middle columns back into the Name.
+        /// Parses the constituents CSV with a quote-aware splitter. The upstream file's
+        /// column layout is Symbol,Security,GICS Sector,… (it has since grown extra
+        /// columns — Headquarters, Date added, CIK, Founded — and quoted fields that
+        /// contain commas, so neither "last column = sector" nor a naive Split(',')
+        /// is safe: that combination once put founding years in the Sector field).
         /// Converts Yahoo-incompatible dot symbols (BRK.B → BRK-B).
         /// </summary>
         private static List<Stock> ParseSP500Csv(string csv)
@@ -93,31 +96,52 @@ namespace StockPicker.Services
                 var line = rawLine.Trim();
                 if (string.IsNullOrEmpty(line)) continue;
 
-                var parts = line.Split(',');
-                if (parts.Length < 3) continue;
+                var parts = SplitCsvLine(line);
+                if (parts.Count < 3) continue;
 
                 var symbol = parts[0].Trim();
                 if (string.IsNullOrEmpty(symbol) || symbol.Equals("Symbol", StringComparison.OrdinalIgnoreCase))
                     continue; // skip header or empty rows
 
-                // Convert dot notation to dash (Yahoo Finance convention)
-                symbol = symbol.Replace('.', '-');
-
-                // Last column = Sector; everything in between = Name (handles commas in names)
-                var sector = parts[^1].Trim();
-                var name   = parts.Length == 3
-                    ? parts[1].Trim()
-                    : string.Join(",", parts[1..^1]).Trim();
+                // Canonicalize (dot → dash, Yahoo Finance convention) via shared helper
+                symbol = SymbolNormalizer.ToCanonical(symbol);
 
                 stocks.Add(new Stock
                 {
                     Symbol   = symbol,
-                    Name     = name,
+                    Name     = parts[1].Trim(),
                     Exchange = "US",
-                    Sector   = sector,
+                    Sector   = parts[2].Trim(),   // GICS Sector is always the third column
                 });
             }
             return stocks;
+        }
+
+        /// <summary>Minimal RFC-4180 field splitter: honors double quotes and "" escapes.</summary>
+        private static List<string> SplitCsvLine(string line)
+        {
+            var fields = new List<string>(8);
+            var sb = new System.Text.StringBuilder();
+            bool inQuotes = false;
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (inQuotes)
+                {
+                    if (c == '"')
+                    {
+                        if (i + 1 < line.Length && line[i + 1] == '"') { sb.Append('"'); i++; }
+                        else inQuotes = false;
+                    }
+                    else sb.Append(c);
+                }
+                else if (c == '"') inQuotes = true;
+                else if (c == ',') { fields.Add(sb.ToString()); sb.Clear(); }
+                else sb.Append(c);
+            }
+            fields.Add(sb.ToString());
+            return fields;
         }
 
         // ── Built-in fallback universe (used when GitHub CSV is unreachable) ──────
@@ -370,13 +394,24 @@ namespace StockPicker.Services
 
                 var item       = result[0];
                 var timestamps = item.GetProperty("timestamp");
-                var quoteArr   = item.GetProperty("indicators").GetProperty("quote")[0];
+                var indicators = item.GetProperty("indicators");
+                var quoteArr   = indicators.GetProperty("quote")[0];
 
                 var opens   = quoteArr.GetProperty("open");
                 var highs   = quoteArr.GetProperty("high");
                 var lows    = quoteArr.GetProperty("low");
                 var closes  = quoteArr.GetProperty("close");
                 var volumes = quoteArr.GetProperty("volume");
+
+                // Split/dividend-adjusted closes, when Yahoo provides them. We back-adjust
+                // the whole bar by the adjclose/close ratio (the standard method), so a
+                // 2:1 split doesn't appear as a fake −50% move in indicators or backtests.
+                JsonElement adjCloses = default;
+                bool hasAdj = indicators.TryGetProperty("adjclose", out var adjArr) &&
+                              adjArr.ValueKind == JsonValueKind.Array &&
+                              adjArr.GetArrayLength() > 0 &&
+                              adjArr[0].TryGetProperty("adjclose", out adjCloses) &&
+                              adjCloses.ValueKind == JsonValueKind.Array;
 
                 int count = timestamps.GetArrayLength();
                 for (int i = 0; i < count; i++)
@@ -392,16 +427,35 @@ namespace StockPicker.Services
                     var l = lows[i];
                     var v = volumes[i];
 
+                    decimal open  = o.GetDecimal();
+                    decimal close = c.GetDecimal();
+                    decimal high  = h.ValueKind != JsonValueKind.Null ? h.GetDecimal() : open;
+                    decimal low   = l.ValueKind != JsonValueKind.Null ? l.GetDecimal() : open;
+                    bool adjusted = false;
+
+                    if (hasAdj && i < adjCloses.GetArrayLength() &&
+                        adjCloses[i].ValueKind != JsonValueKind.Null && close != 0)
+                    {
+                        decimal adj    = adjCloses[i].GetDecimal();
+                        decimal factor = adj / close;
+                        open  = Math.Round(open  * factor, 4);
+                        high  = Math.Round(high  * factor, 4);
+                        low   = Math.Round(low   * factor, 4);
+                        close = adj;
+                        adjusted = true;
+                    }
+
                     quotes.Add(new StockQuote
                     {
                         Symbol    = symbol,
                         Timestamp = DateTimeOffset.FromUnixTimeSeconds(
                                         timestamps[i].GetInt64()).UtcDateTime,
-                        Open   = o.GetDecimal(),
-                        High   = h.ValueKind != JsonValueKind.Null ? h.GetDecimal() : o.GetDecimal(),
-                        Low    = l.ValueKind  != JsonValueKind.Null ? l.GetDecimal() : o.GetDecimal(),
-                        Close  = c.GetDecimal(),
-                        Volume = v.ValueKind  != JsonValueKind.Null ? v.GetInt64()   : 0L,
+                        Open       = open,
+                        High       = high,
+                        Low        = low,
+                        Close      = close,
+                        Volume     = v.ValueKind != JsonValueKind.Null ? v.GetInt64() : 0L,
+                        IsAdjusted = adjusted,
                     });
                 }
             }

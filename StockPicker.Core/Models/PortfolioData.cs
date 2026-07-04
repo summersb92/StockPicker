@@ -17,6 +17,12 @@ namespace StockPicker.Models
         /// <summary>Stocks the user currently holds as open positions.</summary>
         public List<HeldPosition> Held { get; set; } = new();
 
+        /// <summary>Un-invested cash on hand, counted toward total portfolio value.</summary>
+        public decimal CashBalance { get; set; }
+
+        /// <summary>Full ledger of buys, sells, cash deposits, and withdrawals (chronological).</summary>
+        public List<Transaction> Transactions { get; set; } = new();
+
         // ── Daily-picks cache ─────────────────────────────────────────────────
 
         /// <summary>

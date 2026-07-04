@@ -11,6 +11,12 @@
     <RootNamespace>StockPicker</RootNamespace>
     <AssemblyName>StockPicker.Core</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The codebase has partial XML docs; suppress missing-doc noise. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Version>1.0.0</Version>
+    <Description>StockPicker core engine — scanning, analysis, recommendations, portfolio ledger, and LLM context export. UI-free .NET 8 library.</Description>
+    <Authors>Bsummers</Authors>
   </PropertyGroup>
 
 </Project>

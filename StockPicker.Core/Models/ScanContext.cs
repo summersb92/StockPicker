@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace StockPicker.Models
 {
@@ -30,6 +31,22 @@ namespace StockPicker.Models
 
         /// <summary>End of the week-of-interest window (inclusive).</summary>
         public DateTime WeekEnd { get; set; }
+
+        /// <summary>
+        /// Live quote summaries keyed by symbol, for scorers that need fundamentals
+        /// (P/E, P/B, EPS, dividend yield — used by the Value strategy). Null when
+        /// unavailable; price-action strategies ignore it.
+        /// CAUTION: these are TODAY's fundamentals — any scorer using them is not
+        /// point-in-time safe for backtesting (see BacktestEngine).
+        /// </summary>
+        public IReadOnlyDictionary<string, QuoteSummary>? Summaries { get; set; }
+
+        /// <summary>
+        /// When true, skip the expensive historical-analog target-hit estimate.
+        /// Set by the backtest engine, which replays thousands of analyses and
+        /// computes its own outcome statistics from actual future bars.
+        /// </summary>
+        public bool SkipTargetEstimate { get; set; }
 
         // TODO: future tunables to consider:
         //   public decimal MaxRiskPercentPerTrade { get; set; }

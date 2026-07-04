@@ -40,6 +40,12 @@ namespace StockPicker.Models
         public decimal  CostBasis     { get; init; }
         public decimal  MarketValue   { get; init; }
 
+        /// <summary>Un-invested cash on hand. Counts toward <see cref="TotalValue"/> but not toward gain.</summary>
+        public decimal  CashBalance   { get; init; }
+
+        /// <summary>Total portfolio value: marked-to-market holdings (net of any margin loan) plus cash.</summary>
+        public decimal TotalValue => MarketValue + CashBalance;
+
         public decimal TotalGain    => MarketValue - CostBasis;
         public double  TotalGainPct => CostBasis != 0
             ? (double)((MarketValue - CostBasis) / CostBasis) * 100.0 : 0.0;
@@ -49,11 +55,16 @@ namespace StockPicker.Models
 
         public bool HasPositions => PositionCount > 0;
 
+        public string TotalValueDisplay   => $"${TotalValue:N2}";
         public string MarketValueDisplay  => $"${MarketValue:N2}";
+        public string CashDisplay          => $"${CashBalance:N2}";
         public string CostBasisDisplay    => $"${CostBasis:N2}";
         public string TotalGainDisplay     => TotalGain >= 0 ? $"+${TotalGain:N2}" : $"-${Math.Abs(TotalGain):N2}";
         public string TotalGainPctDisplay  => TotalGainPct >= 0 ? $"+{TotalGainPct:F2}%" : $"{TotalGainPct:F2}%";
         public string AsOfDisplay          => $"as of {AsOf:MMM d, HH:mm}";
+
+        /// <summary>"Holdings $X · Cash $Y" breakdown line for the portfolio-value card.</summary>
+        public string ValueBreakdownDisplay => $"Holdings {MarketValueDisplay} · Cash {CashDisplay}";
 
         public static PortfolioPerformance Empty => new();
     }

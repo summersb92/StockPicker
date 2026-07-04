@@ -138,17 +138,57 @@
             </Setter>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Action}" Value="StrongBuy">
-                    <Setter Property="Background" Value="#A5D6A7" />
+                    <Setter Property="Background" Value="#CDEBD6" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Action}" Value="Buy">
-                    <Setter Property="Background" Value="#E8F5E9" />
+                    <Setter Property="Background" Value="#EAF7EE" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Action}" Value="Sell">
-                    <Setter Property="Background" Value="#FFCDD2" />
+                    <Setter Property="Background" Value="#FBE7EA" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Action}" Value="StrongSell">
-                    <Setter Property="Background" Value="#EF9A9A" />
+                    <Setter Property="Background" Value="#F4CBD2" />
                 </DataTrigger>
+                <!-- Hover highlight — declared last so it wins over the action colors,
+                     making the row under the cursor easy to track. -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FFF3C4" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Shared column-header style for the Recommendations grid: documents the
+             non-obvious metrics via a tooltip keyed off the column's own header text. -->
+        <Style x:Key="RecHeaderStyle" TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Style.Triggers>
+                <Trigger Property="Content" Value="Conf.">
+                    <Setter Property="ToolTip" Value="Confidence — signal strength, |score| / 3 capped at 100%." />
+                </Trigger>
+                <Trigger Property="Content" Value="Source">
+                    <Setter Property="ToolTip" Value="Data source(s) that contributed this row's price history." />
+                </Trigger>
+                <Trigger Property="Content" Value="RSI14">
+                    <Setter Property="ToolTip" Value="14-period Relative Strength Index. &lt;30 oversold, &gt;70 overbought." />
+                </Trigger>
+                <Trigger Property="Content" Value="Wk Ret%">
+                    <Setter Property="ToolTip" Value="Return over the most recent 5 trading days." />
+                </Trigger>
+                <Trigger Property="Content" Value="Vol Trend">
+                    <Setter Property="ToolTip" Value="Recent 5-day average volume divided by the 20-day baseline." />
+                </Trigger>
+                <Trigger Property="Content" Value="SMA20">
+                    <Setter Property="ToolTip" Value="20-period simple moving average of the close." />
+                </Trigger>
+                <Trigger Property="Content" Value="SMA50">
+                    <Setter Property="ToolTip" Value="50-period simple moving average of the close." />
+                </Trigger>
+                <Trigger Property="Content" Value="IV%">
+                    <Setter Property="ToolTip" Value="Implied volatility of the near-term at-the-money option." />
+                </Trigger>
+                <Trigger Property="Content" Value="Theta">
+                    <Setter Property="ToolTip" Value="Option time decay per day (Black-Scholes estimate)." />
+                </Trigger>
             </Style.Triggers>
         </Style>
 
@@ -420,11 +460,27 @@
                     <Separator Margin="0,10" />
                     <TextBlock Text="Live Market Data" FontWeight="SemiBold" />
                     <WrapPanel Margin="0,4,0,0">
-                        <TextBlock Text="{Binding LastPrice,                StringFormat='Price: ${0:F2}  ', FallbackValue=''}" />
-                        <TextBlock Text="{Binding CurrentValueDisplay,      StringFormat='Value: {0}  '}" />
-                        <TextBlock Text="{Binding UnrealizedGainDisplay,    StringFormat='Gain: {0}  '}" />
-                        <TextBlock Text="{Binding UnrealizedGainPctDisplay, StringFormat='({0})  '}" />
+                        <TextBlock Text="{Binding LastPrice,             StringFormat='Price: ${0:F2}  ', FallbackValue=''}" />
+                        <TextBlock Text="{Binding CurrentValueDisplay,   StringFormat='Value: {0}  '}" />
+                        <TextBlock Text="{Binding EffectiveGainDisplay,  StringFormat='Gain: {0}  '}" />
+                        <TextBlock Text="{Binding EffectiveGainPctDisplay, StringFormat='({0})  '}" />
                     </WrapPanel>
+
+                    <!-- Margin breakdown — only when the position was bought on margin -->
+                    <StackPanel Visibility="{Binding HasMargin, Converter={StaticResource BoolToVisibility}}">
+                        <Separator Margin="0,10" />
+                        <TextBlock Text="Margin" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding MarginSummaryDisplay}" Foreground="#666" Margin="0,2,0,0" />
+                        <WrapPanel Margin="0,4,0,0">
+                            <TextBlock Text="{Binding EquityInvestedDisplay,  StringFormat='Equity in: {0}  '}" />
+                            <TextBlock Text="{Binding BorrowedDisplay,        StringFormat='Borrowed: {0}  '}" />
+                            <TextBlock Text="{Binding InterestAccruedDisplay, StringFormat='Interest: {0}  '}" />
+                        </WrapPanel>
+                        <WrapPanel Margin="0,2,0,0">
+                            <TextBlock Text="{Binding UnrealizedGainDisplay,    StringFormat='Price gain: {0}  '}" Foreground="#666" />
+                            <TextBlock Text="{Binding UnrealizedGainPctDisplay, StringFormat='({0} unlevered)  '}" Foreground="#666" />
+                        </WrapPanel>
+                    </StackPanel>
 
                     <Separator Margin="0,10" />
                     <TextBlock Text="Plan" FontWeight="SemiBold" />
@@ -614,11 +670,13 @@
                         </StackPanel>
 
                         <!-- Filter bar -->
-                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="6,5">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <!-- Search box -->
@@ -645,8 +703,19 @@
                                                  FontSize="12" />
                                     </Grid>
                                 </Border>
+                                <!-- Result count -->
+                                <TextBlock Grid.Column="1" Text="{Binding RecommendationsCountDisplay}"
+                                           VerticalAlignment="Center" Foreground="#777" FontSize="11"
+                                           Margin="0,0,8,0" />
+                                <!-- Clear filters (only visible when a filter is active) -->
+                                <Button Grid.Column="2" Content="✕ Clear"
+                                        Command="{Binding ClearFiltersCommand}"
+                                        Padding="8,4" Margin="0,0,8,0"
+                                        ToolTip="Clear the search box and Buy-Only filter"
+                                        Visibility="{Binding IsFilterActive,
+                                                             Converter={StaticResource BoolToVisibility}}" />
                                 <!-- Buy Only toggle -->
-                                <ToggleButton Grid.Column="1"
+                                <ToggleButton Grid.Column="3"
                                               Content="Buy Only"
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="10,4"
@@ -654,16 +723,18 @@
                             </Grid>
                         </Border>
 
+                        <Grid>
                         <DataGrid x:Name="FullRecsGrid"
                                   ItemsSource="{Binding RecommendationsView}"
                                   SelectedItem="{Binding SelectedRecommendation}"
                                   AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  AlternatingRowBackground="#F7F7F7"
+                                  AlternatingRowBackground="{StaticResource App.AltRowBrush}"
                                   HorizontalScrollBarVisibility="Auto"
                                   EnableColumnVirtualization="True"
                                   CanUserReorderColumns="True"
                                   RowStyle="{StaticResource RecRowStyle}"
+                                  ColumnHeaderStyle="{StaticResource RecHeaderStyle}"
                                   Sorting="FullRecsGrid_Sorting"
                                   ColumnDisplayIndexChanged="FullRecsGrid_ColumnDisplayIndexChanged">
 
@@ -872,6 +943,15 @@
                                                          Converter={StaticResource BoolToVisibility}}" />
                             </DataGrid.Columns>
                         </DataGrid>
+
+                        <!-- Empty-state when the active filter hides every row -->
+                        <TextBlock Text="No stocks match your filters."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#999" FontStyle="Italic" FontSize="13"
+                                   IsHitTestVisible="False"
+                                   Visibility="{Binding HasNoFilterMatches,
+                                                        Converter={StaticResource BoolToVisibility}}" />
+                        </Grid>
                     </DockPanel>
                 </TabItem>
 
@@ -882,7 +962,7 @@
 
                         <!-- Sub-header: status + strategy selector -->
                         <Border DockPanel.Dock="Top"
-                                Background="#F5F5F5" BorderBrush="#DDD"
+                                Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="8,5">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -938,7 +1018,7 @@
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  AlternatingRowBackground="#FAFAFA"
+                                  AlternatingRowBackground="{StaticResource App.AltRowBrush}"
                                   HorizontalScrollBarVisibility="Auto"
                                   EnableColumnVirtualization="True">
 
@@ -946,10 +1026,10 @@
                                 <Style TargetType="DataGridRow">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding Direction}" Value="Long">
-                                            <Setter Property="Background" Value="#E8F5E9" />
+                                            <Setter Property="Background" Value="#EAF7EE" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Direction}" Value="Short">
-                                            <Setter Property="Background" Value="#FFEBEE" />
+                                            <Setter Property="Background" Value="#FBE7EA" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                     <Setter Property="ToolTip">
@@ -1009,7 +1089,7 @@
 
                         <!-- Sub-header: window + target % + margin controls + status -->
                         <Border DockPanel.Dock="Top"
-                                Background="#F5F5F5" BorderBrush="#DDD"
+                                Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="8,5">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -1088,7 +1168,7 @@
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  AlternatingRowBackground="#FAFAFA"
+                                  AlternatingRowBackground="{StaticResource App.AltRowBrush}"
                                   HorizontalScrollBarVisibility="Auto"
                                   EnableColumnVirtualization="True">
 
@@ -1096,7 +1176,7 @@
                                 <Style TargetType="DataGridRow">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding MeetsThreshold}" Value="True">
-                                            <Setter Property="Background" Value="#E8F5E9" />
+                                            <Setter Property="Background" Value="#EAF7EE" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                     <Setter Property="ToolTip">
@@ -1150,13 +1230,40 @@
                 <!-- ===== News tab ===== -->
                 <TabItem Header="News">
                     <DockPanel>
-                        <!-- Sub-header: status -->
+                        <!-- Sub-header: status + section composer -->
                         <Border DockPanel.Dock="Top"
-                                Background="#F5F5F5" BorderBrush="#DDD"
+                                Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="8,5">
-                            <TextBlock Text="{Binding NewsStatus}"
-                                       VerticalAlignment="Center"
-                                       Foreground="#555" FontStyle="Italic" />
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Text="Sections:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,6,0" FontSize="11" />
+                                    <CheckBox Content="Positions"    IsChecked="{Binding NewsIncludePositions}"
+                                              VerticalAlignment="Center" FontSize="11" Margin="0,0,8,0"
+                                              ToolTip="Hold/sell guidance for your held positions" />
+                                    <CheckBox Content="Best any"     IsChecked="{Binding NewsIncludeBestAny}"
+                                              VerticalAlignment="Center" FontSize="11" Margin="0,0,8,0"
+                                              ToolTip="Score-ranked best Buys across every strategy, with consensus counts" />
+                                    <CheckBox Content="By strategy"  IsChecked="{Binding NewsIncludePerStrategy}"
+                                              VerticalAlignment="Center" FontSize="11" Margin="0,0,8,0"
+                                              ToolTip="Top picks from each strategy's own lens" />
+                                    <CheckBox Content="Earnings"     IsChecked="{Binding NewsIncludeEarnings}"
+                                              VerticalAlignment="Center" FontSize="11" Margin="0,0,8,0"
+                                              ToolTip="Upcoming-earnings candidates" />
+                                    <CheckBox Content="Top picks"    IsChecked="{Binding NewsIncludeTopPicks}"
+                                              VerticalAlignment="Center" FontSize="11" Margin="0,0,12,0"
+                                              ToolTip="Top picks under the currently selected strategy" />
+                                    <TextBlock Text="Ask the LLM for:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                    <ComboBox ItemsSource="{Binding NewsAnalysisPresetOptions}"
+                                              SelectedItem="{Binding NewsAnalysisPreset}"
+                                              Width="110" FontSize="11"
+                                              ToolTip="Which analysis-request question set to append for the downstream LLM" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding NewsStatus}"
+                                           VerticalAlignment="Center"
+                                           Foreground="#555" FontStyle="Italic" />
+                            </DockPanel>
                         </Border>
 
                         <!-- Action buttons -->
@@ -1181,18 +1288,17 @@
 
                         <!-- Disclaimer -->
                         <TextBlock DockPanel.Dock="Bottom"
-                                   Text="&#x26A0; Algorithmic briefing only &#x2014; not financial advice. Intended as input for further LLM analysis; verify independently."
+                                   Text="&#x26A0; Algorithmic briefing only &#x2014; not financial advice. Intended as input for further LLM analysis; verify independently. Click any ticker to open it in the Details pane; [+ watch] adds it to your Watch list."
                                    FontSize="10" Foreground="#999" Margin="6,4" TextWrapping="Wrap" />
 
-                        <!-- Briefing text (read-only, selectable) -->
-                        <TextBox Text="{Binding NewsReport, Mode=OneWay}"
-                                 IsReadOnly="True" IsReadOnlyCaretVisible="True"
-                                 TextWrapping="Wrap" AcceptsReturn="True"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Auto"
-                                 FontFamily="Consolas, Courier New" FontSize="12"
-                                 Background="White" BorderThickness="0" Padding="8"
-                                 VerticalContentAlignment="Top" />
+                        <!-- Interactive briefing (clickable tickers). The markdown string in
+                             NewsReport stays the copy/save source of truth; this viewer is
+                             re-rendered from it in code-behind whenever it changes. -->
+                        <FlowDocumentScrollViewer x:Name="NewsDocViewerFull"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  Background="White"
+                                                  IsToolBarVisible="False" />
                     </DockPanel>
                 </TabItem>
 
@@ -1225,7 +1331,7 @@
                                       SelectionMode="Extended"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                      AlternatingRowBackground="#F7F7F7">
+                                      AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
@@ -1245,10 +1351,10 @@
                                         </Setter>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding WatchIsUp}" Value="True">
-                                                <Setter Property="Background" Value="#E8F5E9" />
+                                                <Setter Property="Background" Value="#EAF7EE" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding WatchIsUp}" Value="False">
-                                                <Setter Property="Background" Value="#FFEBEE" />
+                                                <Setter Property="Background" Value="#FBE7EA" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -1286,25 +1392,46 @@
                     <Grid>
                         <!-- Empty-state overlay -->
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                                    Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}">
+                                    Visibility="{Binding PortfolioIsEmpty, Converter={StaticResource BoolToVisibility}}">
                             <TextBlock Text="No open positions yet.&#x0A;Add one manually, or use &#x22;Mark as Held&#x22; / &#x22;Move to Positions&#x22;."
                                        TextAlignment="Center" Foreground="#AAA" FontStyle="Italic" />
-                            <Button Content="➕  Add Position" Click="AddPosition_Click"
-                                    Padding="12,6" Margin="0,12,0,0" HorizontalAlignment="Center"
-                                    ToolTip="Manually enter a position you hold" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                                <Button Content="➕  Add Position" Click="AddPosition_Click"
+                                        Padding="12,6" Margin="0,0,8,0"
+                                        ToolTip="Manually enter a position you hold" />
+                                <Button Content="💵  Deposit Cash" Click="DepositCash_Click"
+                                        Padding="12,6" Margin="0,0,8,0"
+                                        ToolTip="Record cash on hand — counts toward total portfolio value" />
+                                <Button Content="✎  Edit Cash" Click="EditCash_Click"
+                                        Padding="12,6"
+                                        ToolTip="Set the cash balance directly (correction / testing — not logged)" />
+                            </StackPanel>
                         </StackPanel>
 
-                        <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                        <DockPanel Visibility="{Binding PortfolioIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
                             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
                                 <Button Content="➕ Add Position" Click="AddPosition_Click"
                                         Padding="10,4" Margin="0,0,6,0"
                                         ToolTip="Manually add a new position" />
                                 <Button Content="✎ Edit" Click="EditPosition_Click"
-                                        Padding="10,4" Margin="0,0,12,0"
+                                        Padding="10,4" Margin="0,0,6,0"
                                         ToolTip="Edit the selected position (or double-click a row)" />
-                                <Button Content="Remove from Positions"
+                                <Button Content="💲 Sell" Click="SellPosition_Click"
+                                        Padding="10,4" Margin="0,0,6,0"
+                                        ToolTip="Close out the selected position — credits net proceeds to cash and logs the sale" />
+                                <Button Content="Remove"
                                         Click="RemoveFromPosition_Click"
-                                        Padding="10,4" />
+                                        Padding="10,4" Margin="0,0,12,0"
+                                        ToolTip="Delete a mistaken entry without recording a sale" />
+                                <Button Content="💵 Deposit" Click="DepositCash_Click"
+                                        Padding="10,4" Margin="0,0,6,0"
+                                        ToolTip="Add cash (injection)" />
+                                <Button Content="🏧 Withdraw" Click="WithdrawCash_Click"
+                                        Padding="10,4" Margin="0,0,6,0"
+                                        ToolTip="Remove cash (withdrawal)" />
+                                <Button Content="📜 History" Click="ShowHistory_Click"
+                                        Padding="10,4"
+                                        ToolTip="View all buys, sells, deposits, and withdrawals" />
                             </StackPanel>
 
                             <!-- Performance panel: week / month / quarter / year -->
@@ -1322,7 +1449,8 @@
                                         <!-- Totals -->
                                         <StackPanel Margin="0,0,18,0" VerticalAlignment="Center">
                                             <TextBlock Text="Portfolio value" FontSize="10" Foreground="#789" />
-                                            <TextBlock Text="{Binding Performance.MarketValueDisplay}" FontWeight="Bold" FontSize="15" />
+                                            <TextBlock Text="{Binding Performance.TotalValueDisplay}" FontWeight="Bold" FontSize="15" />
+                                            <TextBlock Text="{Binding Performance.ValueBreakdownDisplay}" FontSize="10" Foreground="#789" />
                                             <TextBlock FontSize="11">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
@@ -1337,6 +1465,22 @@
                                                 </TextBlock.Style>
                                             </TextBlock>
                                         </StackPanel>
+                                        <!-- Cash (changes via Deposit/Withdraw/Sell; ✎ sets it directly) -->
+                                        <Border Margin="0,0,18,0" Padding="9,3" Background="White"
+                                                BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="4"
+                                                VerticalAlignment="Center"
+                                                ToolTip="Un-invested cash. Use Deposit / Withdraw to log a change, or ✎ to set it directly.">
+                                            <StackPanel Orientation="Horizontal">
+                                                <StackPanel>
+                                                    <TextBlock Text="Cash" FontSize="10" Foreground="#789" />
+                                                    <TextBlock Text="{Binding Performance.CashDisplay}" FontWeight="Bold" FontSize="13" />
+                                                </StackPanel>
+                                                <Button Content="✎" Click="EditCash_Click"
+                                                        Width="22" Height="20" Padding="0" Margin="8,0,0,0"
+                                                        VerticalAlignment="Center"
+                                                        ToolTip="Edit the cash balance directly (correction / testing — not logged)" />
+                                            </StackPanel>
+                                        </Border>
                                         <!-- Trailing-window cards -->
                                         <ItemsControl ItemsSource="{Binding Performance.Periods}" VerticalAlignment="Center">
                                             <ItemsControl.ItemsPanel>
@@ -1379,16 +1523,16 @@
                                       MouseDoubleClick="HeldGrid_DoubleClick"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                      AlternatingRowBackground="#F7F7F7">
+                                      AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsProfit}" Value="True">
-                                                <Setter Property="Background" Value="#E8F5E9" />
+                                                <Setter Property="Background" Value="#EAF7EE" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsProfit}" Value="False">
-                                                <Setter Property="Background" Value="#FFEBEE" />
+                                                <Setter Property="Background" Value="#FBE7EA" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -1410,9 +1554,10 @@
                                     <DataGridTextColumn Header="Target Exit"  Binding="{Binding PlannedSellDate, StringFormat={}{0:MMM d}}"  Width="76" />
                                     <DataGridTextColumn Header="Entry $"      Binding="{Binding EntryPrice, StringFormat={}{0:C}}"           Width="76" />
                                     <DataGridTextColumn Header="Shares"       Binding="{Binding ShareCount}"                                  Width="56" />
+                                    <DataGridTextColumn Header="Lev"          Binding="{Binding LeverageDisplay}"                            Width="52" />
                                     <DataGridTextColumn Header="Current $"    Binding="{Binding CurrentValueDisplay}"                         Width="80" />
-                                    <DataGridTextColumn Header="Gain $"       Binding="{Binding UnrealizedGainDisplay}"                      Width="76" />
-                                    <DataGridTextColumn Header="Gain %"       Binding="{Binding UnrealizedGainPctDisplay}"                   Width="68" />
+                                    <DataGridTextColumn Header="Gain $"       Binding="{Binding EffectiveGainDisplay}"                       Width="76" />
+                                    <DataGridTextColumn Header="Gain %"       Binding="{Binding EffectiveGainPctDisplay}"                    Width="68" />
                                     <DataGridTextColumn Header="Hold"         Binding="{Binding HoldingPeriod}"                               Width="64" />
                                     <DataGridTextColumn Header="Notes"        Binding="{Binding Notes}"                                       Width="*" MinWidth="220" />
                                 </DataGrid.Columns>
@@ -1438,6 +1583,10 @@
                                Foreground="#AAA" FontStyle="Italic"
                                Visibility="{Binding HasActiveSelection, Converter={StaticResource InverseBoolToVisibility}}" />
                     <DockPanel Visibility="{Binding HasActiveSelection, Converter={StaticResource BoolToVisibility}}">
+                        <!-- Data provenance — when the prices shown were last fetched -->
+                        <TextBlock DockPanel.Dock="Bottom" Text="{Binding DetailsAsOfDisplay}"
+                                   Foreground="#999" FontSize="10" FontStyle="Italic"
+                                   Margin="8,2,0,2" />
                         <!-- Weekly chart + range toggle -->
                         <Grid DockPanel.Dock="Top" Height="130" Margin="0,0,0,4">
                             <ctrl:StockChartControl
@@ -1486,11 +1635,13 @@
                             <Button Content="Held"  Command="{Binding AddToHeldCommand}" Padding="8,4" />
                         </StackPanel>
                         <!-- Filter bar (compact) -->
-                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="4,4">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" BorderBrush="#CCC" BorderThickness="1"
@@ -1516,7 +1667,16 @@
                                                  FontSize="11" />
                                     </Grid>
                                 </Border>
-                                <ToggleButton Grid.Column="1" Content="Buy Only"
+                                <TextBlock Grid.Column="1" Text="{Binding RecommendationsCountDisplay}"
+                                           VerticalAlignment="Center" Foreground="#777" FontSize="10"
+                                           Margin="0,0,6,0" />
+                                <Button Grid.Column="2" Content="✕"
+                                        Command="{Binding ClearFiltersCommand}"
+                                        Padding="6,3" FontSize="11" Margin="0,0,6,0"
+                                        ToolTip="Clear the search box and Buy-Only filter"
+                                        Visibility="{Binding IsFilterActive,
+                                                             Converter={StaticResource BoolToVisibility}}" />
+                                <ToggleButton Grid.Column="3" Content="Buy Only"
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="6,3" FontSize="11"
                                               ToolTip="Show only Buy-rated recommendations" />
@@ -1555,7 +1715,7 @@
                 <!-- Daily Picks -->
                 <TabItem Header="Daily Picks">
                     <DockPanel>
-                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="6,4">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -1595,15 +1755,15 @@
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  AlternatingRowBackground="#FAFAFA">
+                                  AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                             <DataGrid.RowStyle>
                                 <Style TargetType="DataGridRow">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding Direction}" Value="Long">
-                                            <Setter Property="Background" Value="#E8F5E9" />
+                                            <Setter Property="Background" Value="#EAF7EE" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Direction}" Value="Short">
-                                            <Setter Property="Background" Value="#FFEBEE" />
+                                            <Setter Property="Background" Value="#FBE7EA" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -1626,7 +1786,7 @@
                 <!-- Earnings -->
                 <TabItem Header="Earnings">
                     <DockPanel>
-                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="6,4">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -1671,12 +1831,12 @@
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                  AlternatingRowBackground="#FAFAFA">
+                                  AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                             <DataGrid.RowStyle>
                                 <Style TargetType="DataGridRow">
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding MeetsThreshold}" Value="True">
-                                            <Setter Property="Background" Value="#E8F5E9" />
+                                            <Setter Property="Background" Value="#EAF7EE" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -1697,7 +1857,7 @@
                 <!-- News -->
                 <TabItem Header="News">
                     <DockPanel>
-                        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDD"
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="6,4">
                             <TextBlock Text="{Binding NewsStatus}"
                                        VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" FontSize="10" />
@@ -1756,16 +1916,16 @@
                                       SelectionMode="Extended"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                      AlternatingRowBackground="#F7F7F7">
+                                      AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding WatchIsUp}" Value="True">
-                                                <Setter Property="Background" Value="#E8F5E9" />
+                                                <Setter Property="Background" Value="#EAF7EE" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding WatchIsUp}" Value="False">
-                                                <Setter Property="Background" Value="#FFEBEE" />
+                                                <Setter Property="Background" Value="#FBE7EA" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -1788,20 +1948,27 @@
                 <TabItem Header="{Binding PositionsTabHeader}">
                     <Grid>
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                                    Visibility="{Binding HeldListIsEmpty, Converter={StaticResource BoolToVisibility}}">
+                                    Visibility="{Binding PortfolioIsEmpty, Converter={StaticResource BoolToVisibility}}">
                             <TextBlock Text="No open positions yet." TextAlignment="Center"
                                        Foreground="#AAA" FontStyle="Italic" />
-                            <Button Content="➕ Add Position" Click="AddPosition_Click"
-                                    Padding="10,5" Margin="0,10,0,0" HorizontalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                                <Button Content="➕ Add" Click="AddPosition_Click" Padding="10,5" Margin="0,0,6,0" />
+                                <Button Content="💵 Deposit" Click="DepositCash_Click" Padding="10,5" Margin="0,0,6,0"
+                                        ToolTip="Record cash on hand" />
+                                <Button Content="✎ Edit Cash" Click="EditCash_Click" Padding="10,5"
+                                        ToolTip="Set the cash balance directly (correction / testing — not logged)" />
+                            </StackPanel>
                         </StackPanel>
-                        <DockPanel Visibility="{Binding HeldListIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
+                        <DockPanel Visibility="{Binding PortfolioIsEmpty, Converter={StaticResource InverseBoolToVisibility}}">
                             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
                                 <Button Content="➕ Add" Click="AddPosition_Click" Padding="8,4" Margin="0,0,4,0" />
-                                <Button Content="✎ Edit" Click="EditPosition_Click" Padding="8,4" Margin="0,0,8,0"
+                                <Button Content="✎ Edit" Click="EditPosition_Click" Padding="8,4" Margin="0,0,4,0"
                                         ToolTip="Edit the selected position (or double-click a row)" />
-                                <Button Content="Remove"
-                                        Click="RemoveFromPosition_Click"
-                                        Padding="8,4" />
+                                <Button Content="💲 Sell" Click="SellPosition_Click" Padding="8,4" Margin="0,0,4,0"
+                                        ToolTip="Close out the selected position — credits cash and logs the sale" />
+                                <Button Content="💵" Click="DepositCash_Click" Padding="8,4" Margin="0,0,2,0" ToolTip="Deposit cash" />
+                                <Button Content="🏧" Click="WithdrawCash_Click" Padding="8,4" Margin="0,0,4,0" ToolTip="Withdraw cash" />
+                                <Button Content="📜" Click="ShowHistory_Click" Padding="8,4" ToolTip="Transaction history" />
                             </StackPanel>
 
                             <!-- Performance strip: week / month / quarter / year -->
@@ -1810,8 +1977,23 @@
                                 <WrapPanel Orientation="Horizontal">
                                     <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
                                         <TextBlock Text="Value" FontSize="9" Foreground="#789" />
-                                        <TextBlock Text="{Binding Performance.MarketValueDisplay}" FontWeight="Bold" FontSize="12" />
+                                        <TextBlock Text="{Binding Performance.TotalValueDisplay}" FontWeight="Bold" FontSize="12" />
+                                        <TextBlock Text="{Binding Performance.ValueBreakdownDisplay}" FontSize="8" Foreground="#789" />
                                     </StackPanel>
+                                    <Border Margin="0,0,12,0" Padding="6,2" Background="White"
+                                            BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="3" VerticalAlignment="Center"
+                                            ToolTip="Un-invested cash. Deposit / Withdraw to log a change, or ✎ to set it directly.">
+                                        <StackPanel Orientation="Horizontal">
+                                            <StackPanel>
+                                                <TextBlock Text="Cash" FontSize="9" Foreground="#789" />
+                                                <TextBlock Text="{Binding Performance.CashDisplay}" FontSize="11" FontWeight="Bold" />
+                                            </StackPanel>
+                                            <Button Content="✎" Click="EditCash_Click"
+                                                    Width="20" Height="18" Padding="0" Margin="6,0,0,0"
+                                                    VerticalAlignment="Center" FontSize="10"
+                                                    ToolTip="Edit the cash balance directly (correction / testing — not logged)" />
+                                        </StackPanel>
+                                    </Border>
                                     <ItemsControl ItemsSource="{Binding Performance.Periods}" VerticalAlignment="Center">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
@@ -1851,16 +2033,16 @@
                                       MouseDoubleClick="HeldGrid_DoubleClick"
                                       AutoGenerateColumns="False" IsReadOnly="True"
                                       HeadersVisibility="Column" GridLinesVisibility="Horizontal"
-                                      AlternatingRowBackground="#F7F7F7">
+                                      AlternatingRowBackground="{StaticResource App.AltRowBrush}">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="ContextMenu" Value="{StaticResource RowContextMenu}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsProfit}" Value="True">
-                                                <Setter Property="Background" Value="#E8F5E9" />
+                                                <Setter Property="Background" Value="#EAF7EE" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsProfit}" Value="False">
-                                                <Setter Property="Background" Value="#FFEBEE" />
+                                                <Setter Property="Background" Value="#FBE7EA" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -1871,7 +2053,8 @@
                                     <DataGridTextColumn Header="Entry"   Binding="{Binding EntryDate, StringFormat={}{0:MMM d}}" Width="56" />
                                     <DataGridTextColumn Header="Exit"    Binding="{Binding PlannedSellDate, StringFormat={}{0:MMM d}}" Width="56" />
                                     <DataGridTextColumn Header="Entry $" Binding="{Binding EntryPrice, StringFormat={}{0:C}}"           Width="68" />
-                                    <DataGridTextColumn Header="Gain%"   Binding="{Binding UnrealizedGainPctDisplay}"                   Width="60" />
+                                    <DataGridTextColumn Header="Lev"     Binding="{Binding LeverageDisplay}"                            Width="48" />
+                                    <DataGridTextColumn Header="Gain%"   Binding="{Binding EffectiveGainPctDisplay}"                    Width="60" />
                                     <DataGridTextColumn Header="Hold"    Binding="{Binding HoldingPeriod}"                               Width="56" />
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -1896,6 +2079,10 @@
                                Foreground="#AAA" FontStyle="Italic"
                                Visibility="{Binding HasActiveSelection, Converter={StaticResource InverseBoolToVisibility}}" />
                     <DockPanel Visibility="{Binding HasActiveSelection, Converter={StaticResource BoolToVisibility}}">
+                        <!-- Data provenance — when the prices shown were last fetched -->
+                        <TextBlock DockPanel.Dock="Bottom" Text="{Binding DetailsAsOfDisplay}"
+                                   Foreground="#999" FontSize="10" FontStyle="Italic"
+                                   Margin="8,2,0,2" />
                         <!-- No explicit ContentTemplate: WPF picks the implicit
                              DataTemplate that matches ActiveSelection's runtime type. -->
                         <ContentControl Content="{Binding ActiveSelection}" />

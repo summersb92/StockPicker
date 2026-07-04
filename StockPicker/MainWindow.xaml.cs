@@ -51,6 +51,19 @@ namespace StockPicker
                 };
                 SyncDetailsColumn();
 
+                // Re-render the interactive News document whenever the briefing changes.
+                // The markdown string (vm.NewsReport) stays the copy/save source of truth.
+                void RenderNews() => NewsDocViewerFull.Document =
+                    Controls.NewsBriefingRenderer.Render(
+                        vm.NewsReport, vm.SelectNewsSymbolCommand, vm.AddNewsSymbolToWatchCommand);
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(MainViewModel.NewsReport))
+                        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                            new System.Action(RenderNews));
+                };
+                RenderNews();
+
                 await vm.StartupAsync();
                 RestoreSortToGrid(vm);
             }
@@ -229,11 +242,58 @@ namespace StockPicker
         {
             if (DataContext is not MainViewModel vm || vm.SelectedHeld == null) return;
             var result = MessageBox.Show(
-                $"Remove {vm.SelectedHeld.Symbol} from your positions?",
+                $"Remove {vm.SelectedHeld.Symbol} WITHOUT recording a sale?\n\n" +
+                "Use this only to delete a mistaken entry — no cash is credited and nothing is " +
+                "added to history. To close out a position, use Sell instead.",
                 "Confirm Remove", MessageBoxButton.YesNo,
                 MessageBoxImage.Question, MessageBoxResult.No);
             if (result == MessageBoxResult.Yes)
                 vm.RemoveFromHeldCommand.Execute(null);
+        }
+
+        // ── Sell / cash / history ─────────────────────────────────────────────
+
+        private async void SellPosition_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm || vm.SelectedHeld == null)
+            {
+                MessageBox.Show(this, "Select a position to sell first.", "No position selected",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var dlg = new SellPositionWindow(vm.SelectedHeld) { Owner = this };
+            if (dlg.ShowDialog() == true && dlg.Confirmed)
+                await vm.SellSelectedPosition(dlg.SellPrice, dlg.SellDate);
+        }
+
+        private async void DepositCash_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm) return;
+            var dlg = new CashTransactionWindow(isWithdrawal: false, vm.CashBalance) { Owner = this };
+            if (dlg.ShowDialog() == true && dlg.Confirmed)
+                await vm.DepositCash(dlg.Amount, dlg.Date, dlg.Note);
+        }
+
+        private async void WithdrawCash_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm) return;
+            var dlg = new CashTransactionWindow(isWithdrawal: true, vm.CashBalance) { Owner = this };
+            if (dlg.ShowDialog() == true && dlg.Confirmed)
+                await vm.WithdrawCash(dlg.Amount, dlg.Date, dlg.Note);
+        }
+
+        private void ShowHistory_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm) return;
+            new TransactionHistoryWindow(vm.GetTransactions()) { Owner = this }.ShowDialog();
+        }
+
+        private async void EditCash_Click(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is not MainViewModel vm) return;
+            var dlg = new EditCashWindow(vm.CashBalance) { Owner = this };
+            if (dlg.ShowDialog() == true && dlg.Confirmed)
+                await vm.EditCash(dlg.NewBalance);
         }
 
         // ── Manual position add / edit ────────────────────────────────────────

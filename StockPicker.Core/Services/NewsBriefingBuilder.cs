@@ -6,12 +6,28 @@ using StockPicker.Models;
 
 namespace StockPicker.Services
 {
-    /// <summary>One cross-strategy "best" pick plus the strategy that surfaced it.</summary>
-    public readonly record struct BestPick(Recommendation Rec, string Strategy);
+    /// <summary>
+    /// One cross-strategy "best" pick: the winning read, which strategy produced it,
+    /// and how many of the scanned strategies agreed it was a Buy (consensus).
+    /// </summary>
+    public readonly record struct BestPick(
+        Recommendation Rec, string Strategy, int BuyStrategyCount = 1, int StrategyCount = 1);
+
+    /// <summary>The top Buy-rated picks for a single strategy (for mixed-strategy briefings).</summary>
+    public sealed record StrategyTopPicks(
+        string StrategyName, string HoldingPeriod, IReadOnlyList<Recommendation> Picks);
+
+    /// <summary>Both cross-strategy views produced by <see cref="ScanEngine.CrossStrategyAsync"/>.</summary>
+    public sealed class CrossStrategyResult
+    {
+        public List<BestPick>        Best        { get; init; } = new();
+        public List<StrategyTopPicks> PerStrategy { get; init; } = new();
+    }
 
     /// <summary>
     /// All data the <see cref="NewsBriefingBuilder"/> needs to render a briefing.
     /// Populated identically by the WPF app and the CLI so both produce the same output.
+    /// The Include* flags let the UI compose the briefing section-by-section.
     /// </summary>
     public sealed class BriefingInput
     {
@@ -22,30 +38,54 @@ namespace StockPicker.Services
         public IReadOnlyList<string> DataSources { get; init; } = Array.Empty<string>();
         public string LastDataRefresh { get; init; } = "";
 
-        public IReadOnlyList<Recommendation> Recommendations { get; init; } = Array.Empty<Recommendation>();
-        public IReadOnlyList<HeldPosition>   Positions       { get; init; } = Array.Empty<HeldPosition>();
-        public IReadOnlyList<EarningsPick>   Earnings        { get; init; } = Array.Empty<EarningsPick>();
-        public IReadOnlyList<BestPick>       BestAnyStrategy { get; init; } = Array.Empty<BestPick>();
+        public IReadOnlyList<Recommendation>    Recommendations { get; init; } = Array.Empty<Recommendation>();
+        public IReadOnlyList<HeldPosition>      Positions       { get; init; } = Array.Empty<HeldPosition>();
+        public IReadOnlyList<EarningsPick>      Earnings        { get; init; } = Array.Empty<EarningsPick>();
+        public IReadOnlyList<BestPick>          BestAnyStrategy { get; init; } = Array.Empty<BestPick>();
+        public IReadOnlyList<StrategyTopPicks>  PerStrategy     { get; init; } = Array.Empty<StrategyTopPicks>();
+        public IReadOnlyList<MarketIndex>       MarketIndices   { get; init; } = Array.Empty<MarketIndex>();
+        public PortfolioPerformance?            Performance     { get; init; }
+        public decimal?                         CashBalance     { get; init; }
 
         public int EarningsWindowDays { get; init; } = 30;
         public int TopCount           { get; init; } = 5;
         public DateTime GeneratedAt   { get; init; } = DateTime.Now;
+
+        // ── Section toggles (compose the briefing) ─────────────────────────────
+        public bool IncludePositions   { get; init; } = true;
+        public bool IncludeBestAny     { get; init; } = true;
+        public bool IncludePerStrategy { get; init; } = true;
+        public bool IncludeEarnings    { get; init; } = true;
+        public bool IncludeTopPicks    { get; init; } = true;
+
+        /// <summary>
+        /// Which analysis-request question set to append for the downstream LLM:
+        /// "Full", "Risk review", "Entry planning", or "Portfolio fit".
+        /// </summary>
+        public string AnalysisPreset { get; init; } = "Full";
     }
 
     /// <summary>
     /// Builds the copy-paste-ready markdown News briefing. Pure and WPF-free so the
     /// same output is produced by the desktop app's News tab and the CLI's `news` command.
     ///
-    /// Sections, in order:
-    ///   1. Scan parameters
-    ///   2. Your positions — hold/sell guidance + exit strategy (only if any held)
-    ///   3. Best stocks right now across every strategy
-    ///   4. Top stocks heading into earnings (only if any found)
-    ///   5. Top picks under the selected strategy
-    ///   6. LLM analysis request
+    /// Sections, in order (each gated by its Include* flag where applicable):
+    ///   1. Scan parameters + market context
+    ///   2. Portfolio summary (one line, if performance/cash available)
+    ///   3. Your positions — hold/sell guidance + exit strategy
+    ///   4. Best stocks right now across every strategy (score-ranked, with consensus)
+    ///   5. Top picks per strategy (mixed-strategy view)
+    ///   6. Top stocks heading into earnings
+    ///   7. Top picks under the selected strategy
+    ///   8. Sector concentration rollup (computed, not delegated to the LLM)
+    ///   9. LLM analysis request (preset question sets)
     /// </summary>
     public static class NewsBriefingBuilder
     {
+        /// <summary>Available analysis-request presets, in display order.</summary>
+        public static IReadOnlyList<string> AnalysisPresets { get; } =
+            new[] { "Full", "Risk review", "Entry planning", "Portfolio fit" };
+
         public static string Build(BriefingInput input)
         {
             var sb  = new StringBuilder();
@@ -67,28 +107,60 @@ namespace StockPicker.Services
             sb.AppendLine($"- Data sources: {sources}");
             if (!string.IsNullOrEmpty(input.LastDataRefresh))
                 sb.AppendLine($"- Last data refresh: {input.LastDataRefresh}");
+            AppendMarketContext(sb, input);
             sb.AppendLine();
 
-            AppendPositionsSection(sb, input);
-            AppendBestAnyStrategySection(sb, input);
-            AppendEarningsSection(sb, input);
-            AppendTopPicksSection(sb, input);
-
-            // ── Analysis request for the downstream LLM ──
-            sb.AppendLine("## Analysis request");
-            sb.AppendLine("You are an equity analyst. Using the data above:");
-            sb.AppendLine("1. For each position I hold, confirm or challenge the hold/sell call and refine the exit plan.");
-            sb.AppendLine("2. Rank the candidate picks (cross-strategy + earnings) from most to least attractive.");
-            sb.AppendLine("3. Flag any pick you would avoid and explain the risk.");
-            sb.AppendLine("4. Note any sector concentration or correlated exposure across the list.");
-            sb.AppendLine("5. Suggest entry, stop-loss, and target levels for your top choice.");
-            sb.AppendLine();
-            sb.AppendLine("_Source: StockPicker algorithmic signals — not financial advice. Verify independently._");
+            AppendPortfolioSummary(sb, input);
+            if (input.IncludePositions)   AppendPositionsSection(sb, input);
+            if (input.IncludeBestAny)     AppendBestAnyStrategySection(sb, input);
+            if (input.IncludePerStrategy) AppendPerStrategySection(sb, input);
+            if (input.IncludeEarnings)    AppendEarningsSection(sb, input);
+            if (input.IncludeTopPicks)    AppendTopPicksSection(sb, input);
+            AppendSectorRollup(sb, input);
+            AppendAnalysisRequest(sb, input);
 
             return sb.ToString().TrimEnd();
         }
 
-        // ── Section 2: held positions — hold/sell guidance ─────────────────────
+        // ── Market context (inside Scan parameters) ─────────────────────────────
+        private static void AppendMarketContext(StringBuilder sb, BriefingInput input)
+        {
+            var indices = input.MarketIndices
+                .Where(i => i.Price.HasValue)
+                .ToList();
+            if (indices.Count == 0) return;
+
+            var parts = indices.Select(i =>
+                $"{i.Name} {i.Price:N0} ({(i.DayChangePct >= 0 ? "+" : "")}{i.DayChangePct:F2}%)");
+            sb.AppendLine($"- Market: {string.Join("  ·  ", parts)}");
+        }
+
+        // ── Portfolio one-liner ──────────────────────────────────────────────────
+        private static void AppendPortfolioSummary(StringBuilder sb, BriefingInput input)
+        {
+            var p = input.Performance;
+            if (p == null && !input.CashBalance.HasValue) return;
+
+            sb.AppendLine("## Portfolio snapshot");
+            if (p != null)
+            {
+                sb.AppendLine($"- {p.PositionCount} position(s) · cost basis ${p.CostBasis:N0} · market value ${p.MarketValue:N0}" +
+                              $" · cash ${p.CashBalance:N0} · **total ${p.TotalValue:N0}**" +
+                              $" ({(p.TotalGain >= 0 ? "+" : "")}${p.TotalGain:N0}, {(p.TotalGainPct >= 0 ? "+" : "")}{p.TotalGainPct:F1}%)");
+                var periods = p.Periods.Where(x => x.HasData)
+                    .Select(x => $"{x.Label} {(x.ChangePct >= 0 ? "+" : "")}{x.ChangePct:F1}%");
+                var trail = string.Join("  ·  ", periods);
+                if (!string.IsNullOrEmpty(trail))
+                    sb.AppendLine($"- Trailing: {trail}");
+            }
+            else
+            {
+                sb.AppendLine($"- Cash only: ${input.CashBalance:N0}");
+            }
+            sb.AppendLine();
+        }
+
+        // ── Held positions — hold/sell guidance ─────────────────────────────────
         private static void AppendPositionsSection(StringBuilder sb, BriefingInput input)
         {
             if (input.Positions.Count == 0) return;
@@ -108,7 +180,9 @@ namespace StockPicker.Services
                 var pl = pos.UnrealizedGainPct.HasValue
                     ? $"{(pos.UnrealizedGainPct.Value >= 0 ? "+" : "")}{pos.UnrealizedGainPct.Value:F1}%"
                     : "n/a";
-                var priceNow = pos.LastPrice.HasValue ? $"${pos.LastPrice.Value:F2}" : "—";
+                var priceNow = pos.LastPrice.HasValue
+                    ? $"${pos.LastPrice.Value:F2}"
+                    : "— (no live quote; showing entry-based figures)";
 
                 sb.AppendLine($"### {n++}. {pos.Symbol} — {verdict}" +
                               (string.IsNullOrEmpty(pos.CompanyName) ? "" : $"  ({pos.CompanyName})"));
@@ -178,7 +252,7 @@ namespace StockPicker.Services
             return ("HOLD", verdictRationale, exitPlan);
         }
 
-        // ── Section 3: best stocks across every strategy ───────────────────────
+        // ── Best stocks across every strategy (score-ranked + consensus) ─────────
         private static void AppendBestAnyStrategySection(StringBuilder sb, BriefingInput input)
         {
             sb.AppendLine($"## {input.TopCount} best stocks right now (any strategy)");
@@ -189,22 +263,56 @@ namespace StockPicker.Services
                 return;
             }
 
-            sb.AppendLine("_Highest-conviction Buys found by scanning the universe through every strategy._");
+            sb.AppendLine("_Ranked by raw strategy score (higher = stronger signal). " +
+                          "\"Consensus\" counts how many strategies independently rate the stock a Buy._");
             sb.AppendLine();
             int i = 1;
-            foreach (var (r, strat) in input.BestAnyStrategy.Take(input.TopCount))
+            foreach (var pick in input.BestAnyStrategy.Take(input.TopCount))
             {
+                var r = pick.Rec;
                 sb.AppendLine($"### {i++}. {r.Symbol}" + (string.IsNullOrEmpty(r.CompanyName) ? "" : $" — {r.CompanyName}"));
-                sb.AppendLine($"**{FormatAction(r.Action)}** · {r.Confidence:P0} confidence · via *{strat}*" +
+                sb.AppendLine($"**{FormatAction(r.Action)}** · score {r.Score:0.0} · via *{pick.Strategy}*" +
+                              $" · consensus {pick.BuyStrategyCount}/{pick.StrategyCount} strategies" +
                               (string.IsNullOrEmpty(r.Sector) ? "" : $" · {r.Sector}"));
                 if (r.LastPrice.HasValue) sb.AppendLine($"- Price: ${r.LastPrice:F2}");
                 if (r.RSI14.HasValue)     sb.AppendLine($"- RSI(14): {r.RSI14:F0}");
+                AppendRiskLine(sb, r);
                 if (!string.IsNullOrEmpty(r.Reasoning)) sb.AppendLine($"- Rationale: {r.Reasoning}");
                 sb.AppendLine();
             }
         }
 
-        // ── Section 4: upcoming earnings ───────────────────────────────────────
+        // ── Top picks per strategy (mixed-strategy view) ─────────────────────────
+        private static void AppendPerStrategySection(StringBuilder sb, BriefingInput input)
+        {
+            var sections = input.PerStrategy.Where(s => s.Picks.Count > 0).ToList();
+            if (sections.Count == 0) return;
+
+            sb.AppendLine("## Top picks by strategy");
+            sb.AppendLine("_The strongest Buy from each strategy's own lens — different lenses suit different holding periods._");
+            sb.AppendLine();
+            foreach (var s in sections)
+            {
+                // Strategy names often already embed the holding period ("Momentum (Quick)") —
+                // only append it when they don't.
+                var heading = s.StrategyName.Contains(s.HoldingPeriod, StringComparison.OrdinalIgnoreCase)
+                    ? s.StrategyName
+                    : $"{s.StrategyName}  ({s.HoldingPeriod})";
+                sb.AppendLine($"### {heading}");
+                foreach (var r in s.Picks)
+                {
+                    var line = $"- **{r.Symbol}**" +
+                               (string.IsNullOrEmpty(r.CompanyName) ? "" : $" ({r.CompanyName})") +
+                               $" — {FormatAction(r.Action)}, score {r.Score:0.0}";
+                    if (r.LastPrice.HasValue) line += $", ${r.LastPrice:F2}";
+                    if (r.DaysToEarnings is int d and <= 14) line += $" ⚠ earnings in {d}d";
+                    sb.AppendLine(line);
+                }
+                sb.AppendLine();
+            }
+        }
+
+        // ── Upcoming earnings ────────────────────────────────────────────────────
         private static void AppendEarningsSection(StringBuilder sb, BriefingInput input)
         {
             if (input.Earnings.Count == 0) return;
@@ -230,13 +338,13 @@ namespace StockPicker.Services
             }
         }
 
-        // ── Section 5: top picks under the selected strategy ───────────────────
+        // ── Top picks under the selected strategy ────────────────────────────────
         private static void AppendTopPicksSection(StringBuilder sb, BriefingInput input)
         {
             var top = input.Recommendations
                 .OrderByDescending(r => r.Action == RecommendationAction.StrongBuy ||
                                         r.Action == RecommendationAction.Buy)
-                .ThenByDescending(r => r.Confidence)
+                .ThenByDescending(r => r.Score)
                 .ThenBy(r => r.ActionSortOrder)
                 .Take(input.TopCount)
                 .ToList();
@@ -248,8 +356,7 @@ namespace StockPicker.Services
             foreach (var r in top)
             {
                 sb.AppendLine($"### {i++}. {r.Symbol} — {r.CompanyName}");
-                sb.AppendLine($"**{FormatAction(r.Action)}**" +
-                              (r.Confidence > 0 ? $" · {r.Confidence:P0} confidence" : "") +
+                sb.AppendLine($"**{FormatAction(r.Action)}** · score {r.Score:0.0}" +
                               (string.IsNullOrEmpty(r.Sector) ? "" : $" · {r.Sector}"));
 
                 if (r.LastPrice.HasValue)
@@ -267,12 +374,110 @@ namespace StockPicker.Services
                 if (r.VolumeRatio.HasValue)   sb.AppendLine($"- Volume: {r.VolumeRatio:F1}× average");
                 if (!string.IsNullOrEmpty(r.MarketCapDisplay)) sb.AppendLine($"- Market cap: {r.MarketCapDisplay}");
                 if (r.PERatio.HasValue)       sb.AppendLine($"- P/E: {r.PERatio:F1}");
+                AppendRiskLine(sb, r);
                 if (r.BuyDate.HasValue || r.SellDate.HasValue)
                     sb.AppendLine($"- Suggested hold: {(r.BuyDate.HasValue ? r.BuyDate.Value.ToString("MMM d") : "—")} → {(r.SellDate.HasValue ? r.SellDate.Value.ToString("MMM d") : "—")} ({r.HoldingPeriod})");
                 if (!string.IsNullOrEmpty(r.Reasoning))
                     sb.AppendLine($"- Rationale: {r.Reasoning}");
                 sb.AppendLine();
             }
+        }
+
+        // ── Per-pick risk stats line ─────────────────────────────────────────────
+        private static void AppendRiskLine(StringBuilder sb, Recommendation r)
+        {
+            var parts = new List<string>(4);
+            if (r.AtrPct.HasValue)            parts.Add($"ATR {r.AtrPct:F1}%/day");
+            if (r.Beta.HasValue)              parts.Add($"beta {r.Beta:F1}");
+            if (r.Week52PositionPct.HasValue) parts.Add($"52w range {r.Week52PositionPct:F0}%");
+            if (r.DaysToEarnings is int d)
+                parts.Add(d <= 14 ? $"⚠ earnings in {d}d ({r.NextEarningsDate:MMM d})"
+                                  : $"earnings in {d}d");
+            if (parts.Count > 0)
+                sb.AppendLine($"- Risk: {string.Join(" · ", parts)}");
+        }
+
+        // ── Sector concentration rollup (computed, not delegated to the LLM) ─────
+        private static void AppendSectorRollup(StringBuilder sb, BriefingInput input)
+        {
+            // Collect the distinct symbols the briefing actually presented, with sectors.
+            var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            void Add(string symbol, string? sector)
+            {
+                if (string.IsNullOrEmpty(symbol)) return;
+                if (!seen.ContainsKey(symbol))
+                    seen[symbol] = string.IsNullOrEmpty(sector) ? "Unknown" : sector!;
+            }
+
+            if (input.IncludeBestAny)
+                foreach (var p in input.BestAnyStrategy.Take(input.TopCount)) Add(p.Rec.Symbol, p.Rec.Sector);
+            if (input.IncludePerStrategy)
+                foreach (var s in input.PerStrategy) foreach (var r in s.Picks) Add(r.Symbol, r.Sector);
+            if (input.IncludeEarnings)
+                foreach (var e in input.Earnings.Take(input.TopCount)) Add(e.Symbol, e.Sector);
+            if (input.IncludeTopPicks)
+                foreach (var r in input.Recommendations
+                             .OrderByDescending(x => x.Score).Take(input.TopCount)) Add(r.Symbol, r.Sector);
+
+            if (seen.Count < 2) return;
+
+            var groups = seen.Values
+                .GroupBy(s => s)
+                .OrderByDescending(g => g.Count())
+                .ToList();
+
+            sb.AppendLine("## Sector exposure across the picks above");
+            sb.AppendLine(string.Join("  ·  ", groups.Select(g => $"{g.Key}: {g.Count()}")));
+            var (topSector, topCount) = (groups[0].Key, groups[0].Count());
+            if (topCount * 2 >= seen.Count && topSector != "Unknown")
+                sb.AppendLine($"_⚠ Concentration: {topCount} of {seen.Count} distinct picks are {topSector} — these positions will move together._");
+            sb.AppendLine();
+        }
+
+        // ── LLM analysis request (preset question sets) ──────────────────────────
+        private static void AppendAnalysisRequest(StringBuilder sb, BriefingInput input)
+        {
+            sb.AppendLine("## Analysis request");
+            sb.AppendLine("You are an equity analyst. Using the data above:");
+
+            switch (input.AnalysisPreset)
+            {
+                case "Risk review":
+                    sb.AppendLine("1. Identify the single biggest risk in each held position and each candidate pick.");
+                    sb.AppendLine("2. Which picks carry hidden correlation (sector, factor, or macro) that the sector rollup may understate?");
+                    sb.AppendLine("3. Stress-test: if the market drops 5% next week, which of these are hurt most and why?");
+                    sb.AppendLine("4. Are any picks facing an earnings report or known catalyst that makes the timing dangerous?");
+                    sb.AppendLine("5. Propose position-size limits (as % of portfolio) for the top three candidates based on their volatility.");
+                    break;
+
+                case "Entry planning":
+                    sb.AppendLine("1. For each candidate pick, propose a concrete limit-entry price and explain the level.");
+                    sb.AppendLine("2. Set an initial stop-loss and a first profit target for each (use the ATR and 52-week data given).");
+                    sb.AppendLine("3. Which single pick offers the best risk:reward at today's price, and what is that ratio?");
+                    sb.AppendLine("4. Which picks are better left on a watchlist until a pullback, and to what price?");
+                    sb.AppendLine("5. Sequence the entries: if I can only open one position per day, in what order and why?");
+                    break;
+
+                case "Portfolio fit":
+                    sb.AppendLine("1. Given my current positions and cash, which candidate best complements what I already hold?");
+                    sb.AppendLine("2. Would any candidate double-up an exposure I already have? Flag overlaps.");
+                    sb.AppendLine("3. Suggest a target allocation (% per position, % cash) for a balanced version of this portfolio.");
+                    sb.AppendLine("4. Should any existing position be trimmed or closed to fund a stronger candidate? Compare directly.");
+                    sb.AppendLine("5. What is the one trade (buy, sell, or rebalance) with the highest expected improvement to the portfolio?");
+                    break;
+
+                default: // "Full"
+                    sb.AppendLine("1. For each position I hold, confirm or challenge the hold/sell call and refine the exit plan.");
+                    sb.AppendLine("2. Rank the candidate picks (cross-strategy + earnings) from most to least attractive.");
+                    sb.AppendLine("3. Flag any pick you would avoid and explain the risk.");
+                    sb.AppendLine("4. Note any sector concentration or correlated exposure beyond the rollup above.");
+                    sb.AppendLine("5. Suggest entry, stop-loss, and target levels for your top choice.");
+                    break;
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("_Source: StockPicker algorithmic signals — not financial advice. Verify independently._");
         }
 
         public static string FormatAction(RecommendationAction action) => action switch

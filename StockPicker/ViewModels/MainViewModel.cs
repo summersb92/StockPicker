@@ -41,6 +41,7 @@ namespace StockPicker.ViewModels
         private readonly UserSettingsService    _userSettingsService;
         private readonly IDayPickService        _dayPickService;
         private readonly IEarningsScanService   _earningsScanService;
+        private readonly ContextExportService   _contextExportService = new();
         private UserSettings                    _userSettings;
 
         // ── Market index refresh timer ────────────────────────────────────────
@@ -110,6 +111,14 @@ namespace StockPicker.ViewModels
             _dayPickService        = dayPickService;
             _earningsScanService   = earningsScanService;
 
+            // Surface portfolio persistence problems instead of losing them silently.
+            _portfolioService.PersistenceError += msg => StatusMessage = msg;
+            if (_portfolioService.StartupLoadError is string loadError)
+                StatusMessage = loadError;
+
+            // Surface context-export failures the same way (see ContextExportService).
+            _contextExportService.ExportError += msg => StatusMessage = msg;
+
             // Load user settings synchronously (tiny file — safe in constructor).
             _userSettings = _userSettingsService.Load();
 
@@ -141,9 +150,12 @@ namespace StockPicker.ViewModels
             RegenerateNewsCommand = new RelayCommand(async _ => await GenerateNewsReportAsync());
             CopyNewsCommand       = new RelayCommand(_ => CopyNewsReport(), _ => !string.IsNullOrWhiteSpace(NewsReport));
             AskAINewsCommand      = new RelayCommand(async _ => await AskAIAboutNews(),  _ => Recommendations.Count > 0);
+            SelectNewsSymbolCommand     = new RelayCommand(p => SelectNewsSymbol(p as string));
+            AddNewsSymbolToWatchCommand = new RelayCommand(p => AddNewsSymbolToWatch(p as string));
 
             AddToWatchCommand              = new RelayCommand(_ => AddSelectedToWatch(),    _ => SelectedRecommendation != null);
             AddToHeldCommand               = new RelayCommand(_ => AddSelectedToHeld(),    _ => SelectedRecommendation != null);
+            ClearFiltersCommand            = new RelayCommand(_ => { SearchText = ""; BuyOnlyFilter = false; }, _ => IsFilterActive);
             RemoveFromWatchCommand         = new RelayCommand(_ => RemoveSelectedWatch(),  _ => SelectedWatch           != null);
             RemoveFromHeldCommand          = new RelayCommand(_ => RemoveSelectedHeld(),   _ => SelectedHeld            != null);
             PromoteWatchToPositionCommand  = new RelayCommand(_ => PromoteWatchToPosition(), _ => SelectedWatch         != null);
@@ -181,6 +193,15 @@ namespace StockPicker.ViewModels
             _earningsUseMargin      = _userSettings.EarningsUseMargin;
             _earningsMarginPercent  = _userSettings.EarningsMarginPercent;
             _earningsMarginRatePct  = _userSettings.EarningsMarginRatePct;
+
+            // Restore News briefing composition
+            _newsIncludePositions   = _userSettings.NewsIncludePositions;
+            _newsIncludeBestAny     = _userSettings.NewsIncludeBestAny;
+            _newsIncludePerStrategy = _userSettings.NewsIncludePerStrategy;
+            _newsIncludeEarnings    = _userSettings.NewsIncludeEarnings;
+            _newsIncludeTopPicks    = _userSettings.NewsIncludeTopPicks;
+            _newsAnalysisPreset     = string.IsNullOrEmpty(_userSettings.NewsAnalysisPreset)
+                                          ? "Full" : _userSettings.NewsAnalysisPreset;
 
             // Restore saved weekly target (falls back to field default of 2.0m if not in settings).
             _targetProfitMarginPercent = _userSettings.TargetProfitMarginPercent;
@@ -301,8 +322,10 @@ namespace StockPicker.ViewModels
             {
                 OnPropertyChanged(nameof(PositionsTabHeader));
                 OnPropertyChanged(nameof(HeldListIsEmpty));
+                OnPropertyChanged(nameof(PortfolioIsEmpty));
             };
 
+            _cashBalance = _portfolioService.GetCash();
             RefreshPortfolio();
         }
 
@@ -324,6 +347,80 @@ namespace StockPicker.ViewModels
         // ── Empty-state flags ─────────────────────────────────────────────────
         public bool WatchListIsEmpty => WatchList.Count == 0;
         public bool HeldListIsEmpty  => HeldList.Count  == 0;
+        /// <summary>True only when there are no positions AND no cash — the true "empty portfolio".</summary>
+        public bool PortfolioIsEmpty => HeldList.Count == 0 && CashBalance <= 0m;
+
+        // ── Cash ──────────────────────────────────────────────────────────────
+
+        private decimal _cashBalance;
+        /// <summary>
+        /// Un-invested cash on hand. Read-only here — it changes only through logged
+        /// transactions (deposits, withdrawals, and sale proceeds) so the ledger stays accurate.
+        /// </summary>
+        public decimal CashBalance => _cashBalance;
+
+        /// <summary>Formatted cash balance for the read-only display.</summary>
+        public string CashDisplay => $"${_cashBalance:N2}";
+
+        /// <summary>Re-reads the cash balance from the store after a logged cash change.</summary>
+        private void SyncCashFromService()
+        {
+            _cashBalance = _portfolioService.GetCash();
+            OnPropertyChanged(nameof(CashBalance));
+            OnPropertyChanged(nameof(CashDisplay));
+            OnPropertyChanged(nameof(PortfolioIsEmpty));
+        }
+
+        /// <summary>Snapshot of the full transaction ledger (for the history window).</summary>
+        public IReadOnlyList<Transaction> GetTransactions() => _portfolioService.GetTransactions();
+
+        /// <summary>Adds cash and records a Deposit, then refreshes the portfolio value.</summary>
+        public async Task DepositCash(decimal amount, DateTime date, string note)
+        {
+            _portfolioService.DepositCash(amount, date, note);
+            SyncCashFromService();
+            StatusMessage = $"Deposited {amount:C} to cash.";
+            await RefreshPerformanceAsync();
+        }
+
+        /// <summary>Removes cash (clamped to balance) and records a Withdrawal.</summary>
+        public async Task WithdrawCash(decimal amount, DateTime date, string note)
+        {
+            _portfolioService.WithdrawCash(amount, date, note);
+            SyncCashFromService();
+            StatusMessage = $"Withdrew {amount:C} from cash.";
+            await RefreshPerformanceAsync();
+        }
+
+        /// <summary>
+        /// Directly overrides the cash balance (correction / testing). Unlike Deposit/Withdraw
+        /// this does NOT record a ledger transaction — it just sets the number.
+        /// </summary>
+        public async Task EditCash(decimal newBalance)
+        {
+            _portfolioService.SetCash(newBalance);
+            SyncCashFromService();
+            StatusMessage = $"Cash balance set to ${_cashBalance:N2} (manual correction — not logged).";
+            await RefreshPerformanceAsync();
+        }
+
+        /// <summary>
+        /// Sells the selected position at <paramref name="price"/>, crediting net proceeds to
+        /// cash and recording a Sell in the ledger. Refreshes positions, cash, and performance.
+        /// </summary>
+        public async Task SellSelectedPosition(decimal price, DateTime date)
+        {
+            if (SelectedHeld == null) return;
+            var symbol = SelectedHeld.Symbol;
+            var txn = _portfolioService.SellHeld(symbol, price, SelectedHeld.ShareCount, date);
+            RefreshPortfolio();
+            SyncCashFromService();
+            if (txn != null)
+                StatusMessage = $"Sold {txn.Shares} {txn.Symbol}: {txn.CashDeltaDisplay} to cash " +
+                                $"(realized {txn.RealizedGainDisplay}).";
+            await RefreshPerformanceAsync();
+            await GenerateNewsReportAsync();
+        }
 
         // ── Portfolio performance (week / month / quarter / year) ─────────────
 
@@ -526,6 +623,72 @@ namespace StockPicker.ViewModels
 
         /// <summary>How many top picks the briefing includes.</summary>
         private const int NewsTopCount = 5;
+
+        // ── News briefing composition (persisted; each change re-renders) ─────
+
+        /// <summary>Analysis-request presets for the ComboBox.</summary>
+        public static IReadOnlyList<string> NewsAnalysisPresetOptions => NewsBriefingBuilder.AnalysisPresets;
+
+        private bool NewsToggle(ref bool field, bool value, Action<UserSettings, bool> save)
+        {
+            if (field == value) return false;
+            field = value;
+            save(_userSettings, value);
+            _ = _userSettingsService.SaveAsync(_userSettings);
+            _ = GenerateNewsReportAsync();
+            return true;
+        }
+
+        private bool _newsIncludePositions = true;
+        public bool NewsIncludePositions
+        {
+            get => _newsIncludePositions;
+            set { if (NewsToggle(ref _newsIncludePositions, value, (s, v) => s.NewsIncludePositions = v)) OnPropertyChanged(); }
+        }
+
+        private bool _newsIncludeBestAny = true;
+        public bool NewsIncludeBestAny
+        {
+            get => _newsIncludeBestAny;
+            set { if (NewsToggle(ref _newsIncludeBestAny, value, (s, v) => s.NewsIncludeBestAny = v)) OnPropertyChanged(); }
+        }
+
+        private bool _newsIncludePerStrategy = true;
+        public bool NewsIncludePerStrategy
+        {
+            get => _newsIncludePerStrategy;
+            set { if (NewsToggle(ref _newsIncludePerStrategy, value, (s, v) => s.NewsIncludePerStrategy = v)) OnPropertyChanged(); }
+        }
+
+        private bool _newsIncludeEarnings = true;
+        public bool NewsIncludeEarnings
+        {
+            get => _newsIncludeEarnings;
+            set { if (NewsToggle(ref _newsIncludeEarnings, value, (s, v) => s.NewsIncludeEarnings = v)) OnPropertyChanged(); }
+        }
+
+        private bool _newsIncludeTopPicks = true;
+        public bool NewsIncludeTopPicks
+        {
+            get => _newsIncludeTopPicks;
+            set { if (NewsToggle(ref _newsIncludeTopPicks, value, (s, v) => s.NewsIncludeTopPicks = v)) OnPropertyChanged(); }
+        }
+
+        private string _newsAnalysisPreset = "Full";
+        /// <summary>Which question set the briefing ends with ("Full", "Risk review", …).</summary>
+        public string NewsAnalysisPreset
+        {
+            get => _newsAnalysisPreset;
+            set
+            {
+                if (SetProperty(ref _newsAnalysisPreset, value))
+                {
+                    _userSettings.NewsAnalysisPreset = value;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    _ = GenerateNewsReportAsync();
+                }
+            }
+        }
 
         private string _marketIndexStatus = "Awaiting market data…";
         /// <summary>
@@ -935,7 +1098,10 @@ namespace StockPicker.ViewModels
             set
             {
                 if (SetProperty(ref _searchText, value))
+                {
                     RecommendationsView?.Refresh();
+                    RefreshFilterStatus();
+                }
             }
         }
 
@@ -946,8 +1112,45 @@ namespace StockPicker.ViewModels
             set
             {
                 if (SetProperty(ref _buyOnlyFilter, value))
+                {
                     RecommendationsView?.Refresh();
+                    RefreshFilterStatus();
+                }
             }
+        }
+
+        /// <summary>True when the search box or Buy-Only toggle is narrowing the list.</summary>
+        public bool IsFilterActive => !string.IsNullOrWhiteSpace(_searchText) || _buyOnlyFilter;
+
+        /// <summary>Count of rows currently passing the filter (post-refresh view count).</summary>
+        private int FilteredCount =>
+            RecommendationsView is null ? Recommendations.Count : RecommendationsView.Cast<object>().Count();
+
+        /// <summary>
+        /// "200 stocks" when unfiltered, "Showing 12 of 200" when filtered, "" before the
+        /// first scan. Shown next to the search box.
+        /// </summary>
+        public string RecommendationsCountDisplay
+        {
+            get
+            {
+                int total = Recommendations.Count;
+                if (total == 0) return "";
+                int shown = FilteredCount;
+                return shown == total ? $"{total} stocks" : $"Showing {shown} of {total}";
+            }
+        }
+
+        /// <summary>True when there are recommendations but the active filter hides them all.</summary>
+        public bool HasNoFilterMatches => Recommendations.Count > 0 && FilteredCount == 0;
+
+        /// <summary>Re-evaluates the filter-derived display properties after a filter or data change.</summary>
+        private void RefreshFilterStatus()
+        {
+            OnPropertyChanged(nameof(IsFilterActive));
+            OnPropertyChanged(nameof(RecommendationsCountDisplay));
+            OnPropertyChanged(nameof(HasNoFilterMatches));
+            ((RelayCommand)ClearFiltersCommand).RaiseCanExecuteChanged();
         }
 
         private bool _showColumnPicker;
@@ -1006,8 +1209,16 @@ namespace StockPicker.ViewModels
         public DateTime? LastFetchTime
         {
             get => _lastFetchTime;
-            private set => SetProperty(ref _lastFetchTime, value);
+            private set
+            {
+                if (SetProperty(ref _lastFetchTime, value))
+                    OnPropertyChanged(nameof(DetailsAsOfDisplay));
+            }
         }
+
+        /// <summary>Provenance line for the Details pane, e.g. "Live data as of 2:15 PM".</summary>
+        public string DetailsAsOfDisplay =>
+            _lastFetchTime.HasValue ? $"Live data as of {_lastFetchTime.Value:t}" : "";
 
         private string _refreshStatus = "";
         public string RefreshStatus
@@ -1021,6 +1232,7 @@ namespace StockPicker.ViewModels
         public ICommand ScanCommand              { get; }
         public ICommand AddToWatchCommand        { get; }
         public ICommand AddToHeldCommand         { get; }
+        public ICommand ClearFiltersCommand      { get; }
         public ICommand RemoveFromWatchCommand   { get; }
         public ICommand RemoveFromHeldCommand    { get; }
         public ICommand RefreshDayPicksCommand      { get; }
@@ -1034,6 +1246,8 @@ namespace StockPicker.ViewModels
         public ICommand AddEarningsToHeldCommand      { get; }
         public ICommand RegenerateNewsCommand         { get; }
         public ICommand CopyNewsCommand               { get; }
+        public ICommand SelectNewsSymbolCommand       { get; }
+        public ICommand AddNewsSymbolToWatchCommand   { get; }
         public ICommand AskAINewsCommand              { get; }
         public ICommand PromoteWatchToPositionCommand { get; }
         public ICommand RefreshPerformanceCommand     { get; }
@@ -1188,6 +1402,14 @@ namespace StockPicker.ViewModels
 
             var configuredServices = GetConfiguredServices();
             var diskCache = await _scanCacheService.LoadAsync();
+
+            // Hard expiry: never show data older than 24h — prices may be pre-split
+            // or otherwise stale enough to be misleading. Treat as no cache at all.
+            if (diskCache != null && (DateTime.Now - diskCache.FetchTime).TotalHours >= 24)
+            {
+                StatusMessage = $"Cached data from {diskCache.FetchTime:ddd MMM d} is over 24h old — discarded; fetching fresh data…";
+                diskCache = null;
+            }
 
             if (diskCache != null && IsCacheCompatible(diskCache, configuredServices))
             {
@@ -1356,8 +1578,13 @@ namespace StockPicker.ViewModels
 
         /// <summary>
         /// Merges per-source history dictionaries into a single symbol → bars map.
-        /// For each date where multiple sources have data, OHLCV values are averaged
-        /// (volume is summed then divided by source count for a fair average).
+        ///
+        /// Split/dividend-adjusted bars (Tiingo, Polygon) must never be combined with
+        /// raw bars (Yahoo, Alpaca, Finnhub, Alpha Vantage, Stooq) — after a split they
+        /// differ by the split ratio, and averaging them corrupts every indicator built
+        /// on the series. So per symbol we keep ONE homogeneous class: whichever of
+        /// adjusted/raw covers more trading days (ties prefer adjusted). Within that
+        /// class, same-date bars from multiple sources are averaged.
         /// As a side-effect, populates <see cref="_cachedSourcesBySymbol"/>.
         /// </summary>
         private Dictionary<string, IReadOnlyList<StockQuote>> MergeHistories(
@@ -1376,46 +1603,59 @@ namespace StockPicker.ViewModels
 
             foreach (var sym in allSymbols)
             {
-                // Gather every bar from every source that has data for this symbol.
-                var contributingSources = new List<DataSourceType>();
-                var barsByDate = new Dictionary<DateTime, List<StockQuote>>();
+                // Gather bars per source, split into adjusted vs raw classes.
+                var adjByDate  = new Dictionary<DateTime, List<StockQuote>>();
+                var rawByDate  = new Dictionary<DateTime, List<StockQuote>>();
+                var adjSources = new List<DataSourceType>();
+                var rawSources = new List<DataSourceType>();
 
                 foreach (var (srcType, srcDict) in perSource)
                 {
                     if (!srcDict.TryGetValue(sym, out var bars) || bars.Count == 0)
                         continue;
 
-                    contributingSources.Add(srcType);
+                    // A source's series is "adjusted" only if every bar is (Tiingo can
+                    // fall back to raw per-bar; a partially-adjusted series is unsafe).
+                    bool srcAdjusted = bars.All(b => b.IsAdjusted);
+                    var byDate      = srcAdjusted ? adjByDate : rawByDate;
+                    (srcAdjusted ? adjSources : rawSources).Add(srcType);
+
                     foreach (var bar in bars)
                     {
                         var day = bar.Timestamp.Date;
-                        if (!barsByDate.TryGetValue(day, out var list))
-                            barsByDate[day] = list = new List<StockQuote>(4);
+                        if (!byDate.TryGetValue(day, out var list))
+                            byDate[day] = list = new List<StockQuote>(4);
                         list.Add(bar);
                     }
                 }
 
+                // Pick the class with better coverage; ties prefer adjusted.
+                bool useAdjusted = adjByDate.Count >= rawByDate.Count && adjByDate.Count > 0;
+                var barsByDate           = useAdjusted ? adjByDate  : rawByDate;
+                var contributingSources  = useAdjusted ? adjSources : rawSources;
+
                 if (barsByDate.Count == 0)
                 {
                     merged[sym] = Array.Empty<StockQuote>();
-                    srcMap[sym] = contributingSources;
+                    srcMap[sym] = adjSources.Concat(rawSources).ToList();
                     continue;
                 }
 
-                // Average multi-source bars on the same date.
+                // Average multi-source bars on the same date (same class only).
                 var mergedBars = new List<StockQuote>(barsByDate.Count);
                 foreach (var (day, bars) in barsByDate.OrderBy(kv => kv.Key))
                 {
                     int n = bars.Count;
                     mergedBars.Add(new StockQuote
                     {
-                        Symbol    = sym,
-                        Timestamp = day,
-                        Open      = bars.Sum(b => b.Open)   / n,
-                        High      = bars.Sum(b => b.High)   / n,
-                        Low       = bars.Sum(b => b.Low)    / n,
-                        Close     = bars.Sum(b => b.Close)  / n,
-                        Volume    = bars.Sum(b => b.Volume) / n,
+                        Symbol     = sym,
+                        Timestamp  = day,
+                        Open       = bars.Sum(b => b.Open)   / n,
+                        High       = bars.Sum(b => b.High)   / n,
+                        Low        = bars.Sum(b => b.Low)    / n,
+                        Close      = bars.Sum(b => b.Close)  / n,
+                        Volume     = bars.Sum(b => b.Volume) / n,
+                        IsAdjusted = useAdjusted,
                     });
                 }
 
@@ -1671,6 +1911,7 @@ namespace StockPicker.ViewModels
                 TargetProfitMarginPercent = TargetProfitMarginPercent,
                 WeekStart                 = _cachedWeekStart,
                 WeekEnd                   = _cachedWeekEnd,
+                Summaries                 = _cachedSummaries,
             };
 
             if (isScan)
@@ -1741,10 +1982,16 @@ namespace StockPicker.ViewModels
 
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
+            RefreshFilterStatus();
 
             // Update live prices on watch and held items from the fresh summary cache
             // BEFORE building the briefing, so the positions section reflects current P/L.
             UpdatePortfolioPrices();
+
+            // The scan collections now hold real data, so context exports may safely
+            // overwrite the previous session's bundle from here on (the constructor-time
+            // RefreshPortfolio fires before any data exists — see _contextExportEnabled).
+            _contextExportEnabled = true;
 
             // Refresh the News briefing so it always reflects the latest picks/settings.
             await GenerateNewsReportAsync();
@@ -1971,7 +2218,14 @@ namespace StockPicker.ViewModels
             foreach (var pos in _portfolioService.GetHeld())
                 HeldList.Add(pos);
 
+            // Buys/edits/removes move cash (equity outlay), so keep the displayed balance in sync.
+            SyncCashFromService();
+
             UpdatePortfolioPrices();
+
+            // Every portfolio mutation funnels through here — keep the on-disk
+            // LLM context bundle in step with what the user now holds.
+            ScheduleContextExport();
         }
 
         /// <summary>
@@ -2087,6 +2341,79 @@ namespace StockPicker.ViewModels
                     pos.LastPrice = qs.Price;
         }
 
+        // ── Context export (LLM-consumable bundle) ────────────────────────────
+
+        private CancellationTokenSource _contextExportCts = new();
+
+        /// <summary>
+        /// True once <see cref="RefreshPerformanceAsync"/> has produced a real
+        /// <see cref="Performance"/> value. The VM property itself is non-nullable
+        /// (initialized to <see cref="PortfolioPerformance.Empty"/>), so without this
+        /// flag the first export after launch would write a misleading $0
+        /// performance.json instead of skipping the file.
+        /// </summary>
+        private bool _performanceComputed;
+
+        /// <summary>
+        /// Gates <see cref="ScheduleContextExport"/> until the first
+        /// <see cref="ApplyStrategyAsync"/> has populated the scan collections.
+        /// The constructor-time <see cref="RefreshPortfolio"/> would otherwise
+        /// overwrite the previous session's context files with empty lists
+        /// ~500 ms after launch.
+        /// </summary>
+        private bool _contextExportEnabled;
+
+        /// <summary>
+        /// Schedules a debounced export of the current app state to
+        /// %LOCALAPPDATA%\StockPicker\context\ (same debounce pattern as
+        /// PortfolioService.SaveAsync: cancel any pending export and start a fresh
+        /// 500 ms countdown, so bursts of triggers coalesce into one write).
+        ///
+        /// The bundle is snapshotted HERE, on the UI thread, as IMMUTABLE whitelist
+        /// DTOs (ContextProjections.Project* copies — never live model references,
+        /// so the deferred export can't observe torn, mid-mutation state; and never
+        /// the UserSettings object itself, so API keys can never reach the exporter).
+        /// Only the file write runs off the UI thread.
+        /// </summary>
+        private void ScheduleContextExport()
+        {
+            if (!_contextExportEnabled) return;
+
+            var bundle = new ContextBundle
+            {
+                Recommendations      = Recommendations.Select(ContextProjections.ProjectRecommendation).ToList(),
+                Earnings             = EarningsPicks.Select(ContextProjections.ProjectEarnings).ToList(),
+                DayPicks             = DayPicks.Select(ContextProjections.ProjectDayPick).ToList(),
+                Positions            = HeldList.Select(ContextProjections.ProjectPosition).ToList(),
+                Transactions         = _portfolioService.GetTransactions().Select(ContextProjections.ProjectTransaction).ToList(),
+                CashBalance          = CashBalance,
+                Performance          = _performanceComputed
+                                           ? ContextProjections.ProjectPerformance(Performance)
+                                           : null,
+                NewsBriefingMarkdown = NewsReport,
+                DataFetchTime        = LastFetchTime,
+                EnabledSources       = _userSettings.EnabledDataSources.ToList(),
+                UniverseDescription  = SelectedIndexDescription,
+                StrategyName         = SelectedStrategy?.Name ?? string.Empty,
+                GeneratedAt          = DateTime.Now,
+            };
+
+            // Cancel the previously scheduled export (if any), dispose the spent
+            // CTS, and start a new countdown.
+            _contextExportCts.Cancel();
+            _contextExportCts.Dispose();
+            _contextExportCts = new CancellationTokenSource();
+            var token = _contextExportCts.Token;
+
+            _ = Task.Delay(500, token)
+                    .ContinueWith(
+                        _ => _contextExportService.ExportAsync(bundle),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnRanToCompletion,
+                        TaskScheduler.Default)
+                    .Unwrap();
+        }
+
         // ── Ask AI ───────────────────────────────────────────────────────────
 
         /// <summary>
@@ -2123,9 +2450,10 @@ namespace StockPicker.ViewModels
                 return;
             }
 
-            // Best Buys across EVERY strategy (independent of the one selected).
-            // Memoized against the cached data, so strategy/target flips are instant.
-            var bestAny = await GetBestAnyStrategyAsync();
+            // Both cross-strategy views (best-any + per-strategy tops), independent of
+            // the selected strategy. Memoized against the cached data, so strategy/target
+            // flips are instant.
+            var cross = await GetCrossStrategyAsync();
 
             var input = new BriefingInput
             {
@@ -2140,41 +2468,56 @@ namespace StockPicker.ViewModels
                 Recommendations      = Recommendations.ToList(),
                 Positions            = HeldList.ToList(),
                 Earnings             = EarningsPicks.ToList(),
-                BestAnyStrategy      = bestAny,
+                BestAnyStrategy      = cross.Best,
+                PerStrategy          = cross.PerStrategy,
+                MarketIndices        = MarketIndices.ToList(),
+                Performance          = _performanceComputed ? Performance : null,
+                CashBalance          = _portfolioService.GetCash(),
                 EarningsWindowDays   = _earningsWindowDays,
                 TopCount             = NewsTopCount,
                 GeneratedAt          = DateTime.Now,
+                IncludePositions     = NewsIncludePositions,
+                IncludeBestAny       = NewsIncludeBestAny,
+                IncludePerStrategy   = NewsIncludePerStrategy,
+                IncludeEarnings      = NewsIncludeEarnings,
+                IncludeTopPicks      = NewsIncludeTopPicks,
+                AnalysisPreset       = NewsAnalysisPreset,
             };
 
             NewsReport = NewsBriefingBuilder.Build(input);
             NewsStatus = $"Briefing ready — positions, earnings & cross-strategy picks · {DateTime.Now:HH:mm}";
+
+            // The briefing runs last in the scan pipeline, so this snapshot captures
+            // recommendations, earnings, day picks, and the fresh briefing together.
+            ScheduleContextExport();
         }
 
-        // Cross-strategy "best" cache. Recomputed only when the underlying price data
-        // (referenced by _cachedHistory) is replaced by a fresh fetch.
-        private List<BestPick>? _bestAnyStrategy;
-        private object? _bestAnyStrategyComputedFor;
+        // Cross-strategy cache (best-any + per-strategy tops). Recomputed only when the
+        // underlying price data (referenced by _cachedHistory) is replaced by a fresh fetch.
+        private CrossStrategyResult? _crossStrategy;
+        private object? _crossStrategyComputedFor;
 
         /// <summary>
-        /// Top Buy/StrongBuy picks across every strategy, deduplicated to the best read
-        /// per symbol. Delegates to the shared <see cref="ScanEngine"/> and memoizes
-        /// against the current cached data set so strategy/target flips don't recompute.
+        /// Both cross-strategy views: top Buy/StrongBuy per symbol across every strategy
+        /// (score-ranked, with consensus counts) plus each strategy's own top picks.
+        /// Delegates to the shared <see cref="ScanEngine"/> and memoizes against the
+        /// current cached data set so strategy/target flips don't recompute.
         /// </summary>
-        private async Task<List<BestPick>> GetBestAnyStrategyAsync()
+        private async Task<CrossStrategyResult> GetCrossStrategyAsync()
         {
             if (_cachedUniverse == null || _cachedHistory == null)
-                return new List<BestPick>();
+                return new CrossStrategyResult();
 
-            if (_bestAnyStrategy != null && ReferenceEquals(_bestAnyStrategyComputedFor, _cachedHistory))
-                return _bestAnyStrategy;
+            if (_crossStrategy != null && ReferenceEquals(_crossStrategyComputedFor, _cachedHistory))
+                return _crossStrategy;
 
-            var best = await ScanEngine.BestAcrossStrategiesAsync(
+            var cross = await ScanEngine.CrossStrategyAsync(
                 BuildScanData(), Strategies.ToList(), TargetProfitMarginPercent,
                 _analysisService, _recommendationService, NewsTopCount);
 
-            _bestAnyStrategy            = best;
-            _bestAnyStrategyComputedFor = _cachedHistory;
-            return best;
+            _crossStrategy            = cross;
+            _crossStrategyComputedFor = _cachedHistory;
+            return cross;
         }
 
         /// <summary>Snapshots the in-memory cache fields into a <see cref="ScanData"/> for the engine.</summary>
@@ -2195,6 +2538,75 @@ namespace StockPicker.ViewModels
             System.Windows.Clipboard.SetText(NewsReport);
             NewsStatus  = $"Copied to clipboard · {DateTime.Now:HH:mm}";
             StatusMessage = "News briefing copied to clipboard — paste it into any LLM.";
+        }
+
+        // ── News tab interactivity ──────────────────────────────────────────────
+
+        /// <summary>
+        /// A symbol was clicked inside the rendered briefing: surface it in the shared
+        /// Details pane and load its chart/options, using the richest object we have.
+        /// </summary>
+        private void SelectNewsSymbol(string? symbol)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return;
+
+            object? selection =
+                (object?)Recommendations.FirstOrDefault(r => r.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+                ?? HeldList.FirstOrDefault(p => p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase))
+                ?? (object?)EarningsPicks.FirstOrDefault(e => e.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+
+            // Fall back to a minimal record built from the quote cache so the Details
+            // pane still shows something for cross-strategy picks outside the current list.
+            if (selection == null)
+            {
+                var rec = new Recommendation { Symbol = symbol.ToUpperInvariant(), SourceTag = "News" };
+                if (_cachedSummaries != null && _cachedSummaries.TryGetValue(symbol, out var qs))
+                {
+                    rec.CompanyName  = qs.LongName ?? qs.ShortName ?? symbol;
+                    rec.LastPrice    = qs.Price;
+                    rec.DayChangePct = qs.DayChangePct;
+                }
+                selection = rec;
+            }
+
+            ActiveSelection = selection;
+            _ = LoadChartAsync(symbol);
+            _ = LoadOptionsAsync(symbol);
+            StatusMessage = $"{symbol.ToUpperInvariant()} selected from the News briefing.";
+        }
+
+        /// <summary>An inline [+ watch] link was clicked next to a pick in the briefing.</summary>
+        private void AddNewsSymbolToWatch(string? symbol)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return;
+            symbol = symbol.ToUpperInvariant();
+
+            var rec = Recommendations.FirstOrDefault(r => r.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+            if (rec == null)
+            {
+                rec = new Recommendation
+                {
+                    Symbol    = symbol,
+                    Action    = RecommendationAction.Buy,
+                    SourceTag = "News",
+                };
+                if (_cachedSummaries != null && _cachedSummaries.TryGetValue(symbol, out var qs))
+                {
+                    rec.CompanyName = qs.LongName ?? qs.ShortName ?? symbol;
+                    rec.Sector      = qs.Sector ?? "";
+                    rec.LastPrice   = qs.Price;
+                }
+            }
+            else
+            {
+                rec.SourceTag = "News";
+            }
+
+            rec.WatchedPrice = rec.LastPrice;
+            rec.WatchedAt    = DateTime.Now;
+            _portfolioService.AddToWatch(rec);
+            RefreshPortfolio();
+            StatusMessage = $"{symbol} added to Watch from the News briefing.";
         }
 
         /// <summary>True when there is a real briefing to save (not the placeholder text).</summary>
@@ -2609,14 +3021,18 @@ namespace StockPicker.ViewModels
         {
             if (HeldList.Count == 0)
             {
-                Performance = PortfolioPerformance.Empty;
+                // No positions, but still surface cash on hand as the portfolio value.
+                Performance = new PortfolioPerformance { CashBalance = CashBalance };
+                _performanceComputed = true;   // real (cash-only) figures — exportable
                 return;
             }
 
             IsPerformanceLoading = true;
             try
             {
-                Performance = await PerformanceService.ComputeAsync(HeldList.ToList(), _dataService);
+                Performance = await PerformanceService.ComputeAsync(
+                    HeldList.ToList(), _dataService, CashBalance);
+                _performanceComputed = true;   // context exports may now include performance.json
             }
             catch (Exception ex)
             {

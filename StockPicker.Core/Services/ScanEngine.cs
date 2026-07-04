@@ -118,9 +118,11 @@ namespace StockPicker.Services
         }
 
         /// <summary>
-        /// Scans the universe through every supplied strategy, keeps the highest-confidence
+        /// Scans the universe through every supplied strategy, keeps the highest-scoring
         /// Buy/StrongBuy read per symbol, and returns the top <paramref name="topCount"/>
-        /// (enriched) ranked by confidence.
+        /// (enriched) ranked by RAW SCORE — never by confidence, which saturates at 1.0
+        /// once |score| ≥ 3 and would collapse the ranking to alphabetical order.
+        /// Delegates to <see cref="CrossStrategyAsync"/>.
         /// </summary>
         public static async Task<List<BestPick>> BestAcrossStrategiesAsync(
             ScanData data,
@@ -129,10 +131,34 @@ namespace StockPicker.Services
             IAnalysisService analysis,
             IRecommendationService recommendation,
             int topCount)
+            => (await CrossStrategyAsync(data, strategies, targetProfitPercent,
+                                         analysis, recommendation, topCount)).Best;
+
+        /// <summary>
+        /// One pass over every strategy that produces BOTH cross-strategy views:
+        /// <list type="bullet">
+        ///   <item><b>Best</b> — top Buy/StrongBuy per symbol across all strategies, ranked by
+        ///   raw score (desc), then by how many strategies agree, then symbol. Each pick
+        ///   carries its consensus count ("Buy on N of M strategies").</item>
+        ///   <item><b>PerStrategy</b> — the top <paramref name="perStrategyTop"/> Buy-rated
+        ///   picks for EACH strategy, so a briefing can mix strategies side by side.</item>
+        /// </list>
+        /// All returned recommendations are enriched with live quote data.
+        /// </summary>
+        public static async Task<CrossStrategyResult> CrossStrategyAsync(
+            ScanData data,
+            IReadOnlyList<TradingStrategy> strategies,
+            decimal targetProfitPercent,
+            IAnalysisService analysis,
+            IRecommendationService recommendation,
+            int topCount,
+            int perStrategyTop = 3)
         {
-            var ranked = await Task.Run(() =>
+            var (ranked, perStrategy) = await Task.Run(() =>
             {
-                var bySymbol = new Dictionary<string, (Recommendation rec, string strat)>(StringComparer.OrdinalIgnoreCase);
+                var bySymbol = new Dictionary<string, (Recommendation rec, string strat, int buyCount)>(
+                                   StringComparer.OrdinalIgnoreCase);
+                var sections = new List<StrategyTopPicks>(strategies.Count);
 
                 foreach (var strat in strategies)
                 {
@@ -140,27 +166,61 @@ namespace StockPicker.Services
                     var analyses = RunAnalyses(data, ctx, analysis);
                     var recs     = recommendation.GenerateAsync(analyses, ctx).Result;
 
+                    var stratBuys = new List<Recommendation>();
                     foreach (var r in recs)
                     {
                         if (r.Action != RecommendationAction.Buy && r.Action != RecommendationAction.StrongBuy)
                             continue;
-                        if (!bySymbol.TryGetValue(r.Symbol, out var existing) || r.Confidence > existing.rec.Confidence)
-                            bySymbol[r.Symbol] = (r, strat.Name);
+
+                        stratBuys.Add(r);
+
+                        // Keep the highest-SCORING read per symbol; count strategy agreement.
+                        if (bySymbol.TryGetValue(r.Symbol, out var existing))
+                        {
+                            bySymbol[r.Symbol] = r.Score > existing.rec.Score
+                                ? (r, strat.Name, existing.buyCount + 1)
+                                : (existing.rec, existing.strat, existing.buyCount + 1);
+                        }
+                        else
+                        {
+                            bySymbol[r.Symbol] = (r, strat.Name, 1);
+                        }
                     }
+
+                    sections.Add(new StrategyTopPicks(
+                        strat.Name,
+                        strat.HoldingPeriod.ToString(),
+                        stratBuys.OrderByDescending(r => r.Score)
+                                 .ThenBy(r => r.Symbol)
+                                 .Take(perStrategyTop)
+                                 .ToList()));
                 }
 
-                return bySymbol.Values
-                    .OrderByDescending(x => x.rec.Confidence)
-                    .ThenBy(x => x.rec.ActionSortOrder)
+                var best = bySymbol.Values
+                    .OrderByDescending(x => x.rec.Score)
+                    .ThenByDescending(x => x.buyCount)
                     .ThenBy(x => x.rec.Symbol)
                     .Take(topCount)
                     .ToList();
+
+                return (best, sections);
             });
 
-            foreach (var (rec, _) in ranked)
-                Enrich(rec, data);
+            int strategyCount = strategies.Count;
 
-            return ranked.Select(x => new BestPick(x.rec, x.strat)).ToList();
+            // Enrich every distinct recommendation instance surfaced by either view.
+            var enriched = new HashSet<Recommendation>();
+            foreach (var (rec, _, _) in ranked)
+                if (enriched.Add(rec)) Enrich(rec, data);
+            foreach (var section in perStrategy)
+                foreach (var rec in section.Picks)
+                    if (enriched.Add(rec)) Enrich(rec, data);
+
+            return new CrossStrategyResult
+            {
+                Best = ranked.Select(x => new BestPick(x.rec, x.strat, x.buyCount, strategyCount)).ToList(),
+                PerStrategy = perStrategy,
+            };
         }
 
         // ── Internals ──────────────────────────────────────────────────────────
@@ -172,6 +232,7 @@ namespace StockPicker.Services
                 TargetProfitMarginPercent = target,
                 WeekStart                 = data.WeekStart,
                 WeekEnd                   = data.WeekEnd,
+                Summaries                 = data.Summaries,
             };
 
         private static List<AnalysisResult> RunAnalyses(ScanData data, ScanContext ctx, IAnalysisService analysis)
@@ -208,12 +269,17 @@ namespace StockPicker.Services
                 rec.Week52High       = qs.Week52High;
                 rec.Week52Low        = qs.Week52Low;
                 rec.Beta             = qs.Beta;
+                rec.NextEarningsDate = qs.NextEarningsDate;
                 rec.DividendYieldPct = qs.DividendYieldPct;
                 rec.ShortRatio       = qs.ShortRatio;
                 rec.ImpliedVolatility = qs.ImpliedVolatility;
                 rec.Theta             = qs.Theta;
             }
-            else if (data.NameLookup.TryGetValue(rec.Symbol, out var info))
+
+            // Always backfill name/sector from the universe lookup — Yahoo's quote
+            // endpoint returns no sector, so without this the sector rollup reads
+            // "Unknown" even though the universe list knows every constituent's sector.
+            if (data.NameLookup.TryGetValue(rec.Symbol, out var info))
             {
                 if (string.IsNullOrEmpty(rec.CompanyName)) rec.CompanyName = info.Name;
                 if (string.IsNullOrEmpty(rec.Sector))      rec.Sector      = info.Sector;

@@ -43,6 +43,11 @@ namespace StockPicker.Views
             SourceBox.Text             = string.IsNullOrWhiteSpace(p.SourceTag) ? "Manual" : p.SourceTag;
             NotesBox.Text              = p.Notes;
 
+            // Margin: prefill sensible defaults (50% / 12.5%) so a freshly-ticked box is usable.
+            MarginCheck.IsChecked = p.BoughtOnMargin;
+            MarginPercentBox.Text = (p.MarginPercent > 0 ? p.MarginPercent : 50m).ToString("0.###");
+            MarginRateBox.Text    = (p.MarginInterestRatePercent > 0 ? p.MarginInterestRatePercent : 12.5m).ToString("0.###");
+
             // Focus the first editable field.
             Loaded += (_, _) => { if (_isEdit) EntryPriceBox.Focus(); else SymbolBox.Focus(); };
         }
@@ -74,6 +79,27 @@ namespace StockPicker.Views
                 return;
             }
 
+            bool onMargin = MarginCheck.IsChecked == true;
+            decimal marginPercent = 50m, marginRate = 0m;
+            if (onMargin)
+            {
+                if (!decimal.TryParse(MarginPercentBox.Text, out marginPercent) || marginPercent <= 0 || marginPercent > 100)
+                {
+                    MessageBox.Show(this, "Enter a margin % between 0 (exclusive) and 100. 50% means 2× leverage.",
+                        "Invalid margin %", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MarginPercentBox.Focus();
+                    return;
+                }
+
+                if (!decimal.TryParse(MarginRateBox.Text, out marginRate) || marginRate < 0)
+                {
+                    MessageBox.Show(this, "Enter a valid annual interest rate (a non-negative number).",
+                        "Invalid interest rate", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MarginRateBox.Focus();
+                    return;
+                }
+            }
+
             Result = new HeldPosition
             {
                 Symbol          = symbol,
@@ -86,6 +112,9 @@ namespace StockPicker.Views
                                       ? hp : HoldingPeriod.Unspecified,
                 SourceTag       = string.IsNullOrWhiteSpace(SourceBox.Text) ? "Manual" : SourceBox.Text.Trim(),
                 Notes           = (NotesBox.Text ?? "").Trim(),
+                BoughtOnMargin            = onMargin,
+                MarginPercent             = onMargin ? marginPercent : 50m,
+                MarginInterestRatePercent = onMargin ? marginRate : 0m,
             };
 
             DialogResult = true;

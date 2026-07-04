@@ -104,13 +104,14 @@ namespace StockPicker.Services
 
                     quotes.Add(new StockQuote
                     {
-                        Symbol    = symbol,
-                        Timestamp = date,
-                        Open      = o.Value,
-                        High      = h ?? o.Value,
-                        Low       = l ?? o.Value,
-                        Close     = c.Value,
-                        Volume    = v ?? 0L,
+                        Symbol     = symbol,
+                        Timestamp  = date,
+                        Open       = o.Value,
+                        High       = h ?? o.Value,
+                        Low        = l ?? o.Value,
+                        Close      = c.Value,
+                        Volume     = v ?? 0L,
+                        IsAdjusted = true,   // request uses adjusted=true
                     });
                 }
             }

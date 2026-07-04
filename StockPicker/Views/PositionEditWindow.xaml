@@ -49,6 +49,9 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Symbol"        Style="{StaticResource FieldLabel}" />
@@ -67,23 +70,42 @@
             <TextBox   Grid.Row="3" Grid.Column="1" x:Name="SharesBox"
                        ToolTip="Number of shares held" />
 
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="Entry date"    Style="{StaticResource FieldLabel}" />
-            <DatePicker Grid.Row="4" Grid.Column="1" x:Name="EntryDatePicker" />
+            <!-- ── Margin ─────────────────────────────────────────────── -->
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Margin"         Style="{StaticResource FieldLabel}" />
+            <CheckBox  Grid.Row="4" Grid.Column="1" x:Name="MarginCheck"
+                       Content="Bought on margin (borrowed funds)"
+                       VerticalAlignment="Center" Margin="0,0,0,8"
+                       ToolTip="Tick if this position was purchased with borrowed money." />
 
-            <TextBlock Grid.Row="5" Grid.Column="0" Text="Planned exit"  Style="{StaticResource FieldLabel}" />
-            <DatePicker Grid.Row="5" Grid.Column="1" x:Name="PlannedSellPicker"
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Margin %"       Style="{StaticResource FieldLabel}"
+                       IsEnabled="{Binding IsChecked, ElementName=MarginCheck}" />
+            <TextBox   Grid.Row="5" Grid.Column="1" x:Name="MarginPercentBox"
+                       IsEnabled="{Binding IsChecked, ElementName=MarginCheck}"
+                       ToolTip="Equity you put up, as a % of the position. 50% = 2× leverage." />
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Interest %/yr"  Style="{StaticResource FieldLabel}"
+                       IsEnabled="{Binding IsChecked, ElementName=MarginCheck}" />
+            <TextBox   Grid.Row="6" Grid.Column="1" x:Name="MarginRateBox"
+                       IsEnabled="{Binding IsChecked, ElementName=MarginCheck}"
+                       ToolTip="Annual interest rate charged on the borrowed portion." />
+
+            <TextBlock Grid.Row="7" Grid.Column="0" Text="Entry date"    Style="{StaticResource FieldLabel}" />
+            <DatePicker Grid.Row="7" Grid.Column="1" x:Name="EntryDatePicker" />
+
+            <TextBlock Grid.Row="8" Grid.Column="0" Text="Planned exit"  Style="{StaticResource FieldLabel}" />
+            <DatePicker Grid.Row="8" Grid.Column="1" x:Name="PlannedSellPicker"
                         ToolTip="Optional planned exit date" />
 
-            <TextBlock Grid.Row="6" Grid.Column="0" Text="Holding"       Style="{StaticResource FieldLabel}" />
-            <ComboBox  Grid.Row="6" Grid.Column="1" x:Name="HoldingPeriodBox" />
+            <TextBlock Grid.Row="9" Grid.Column="0" Text="Holding"       Style="{StaticResource FieldLabel}" />
+            <ComboBox  Grid.Row="9" Grid.Column="1" x:Name="HoldingPeriodBox" />
 
-            <TextBlock Grid.Row="7" Grid.Column="0" Text="Source"        Style="{StaticResource FieldLabel}" />
-            <TextBox   Grid.Row="7" Grid.Column="1" x:Name="SourceBox"
+            <TextBlock Grid.Row="10" Grid.Column="0" Text="Source"        Style="{StaticResource FieldLabel}" />
+            <TextBox   Grid.Row="10" Grid.Column="1" x:Name="SourceBox"
                        ToolTip="Where this position came from (defaults to Manual)" />
 
-            <TextBlock Grid.Row="8" Grid.Column="0" Text="Notes"         Style="{StaticResource FieldLabel}"
+            <TextBlock Grid.Row="11" Grid.Column="0" Text="Notes"         Style="{StaticResource FieldLabel}"
                        VerticalAlignment="Top" Margin="0,3,10,0" />
-            <TextBox   Grid.Row="8" Grid.Column="1" x:Name="NotesBox"
+            <TextBox   Grid.Row="11" Grid.Column="1" x:Name="NotesBox"
                        AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56"
                        VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" />
         </Grid>

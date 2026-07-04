@@ -18,9 +18,9 @@ namespace StockPicker.Services
     /// Get a free API token at: https://www.tiingo.com/account/api/token
     ///
     /// Endpoints used:
-    ///   History : GET /tiingo/daily/{symbol}/prices?startDate=…&endDate=…&token=…
+    ///   History : GET /tiingo/daily/{symbol}/prices?startDate=…&amp;endDate=…&amp;token=…
     ///   Latest  : GET /iex/{symbol}?token=…  (real-time via IEX)
-    ///   Batch   : GET /iex?tickers={sym1,sym2,…}&token=…  (up to ~100 per call)
+    ///   Batch   : GET /iex?tickers={sym1,sym2,…}&amp;token=…  (up to ~100 per call)
     ///   Meta    : GET /tiingo/daily/{symbol}?token=…  (name, exchange)
     /// </summary>
     public class TiingoStockDataService : IStockDataService
@@ -104,6 +104,8 @@ namespace StockPicker.Services
                     if (!DateTime.TryParse(dateProp.GetString(), out var date)) continue;
 
                     // Prefer adjusted prices when available; fall back to raw.
+                    bool adjusted = item.TryGetProperty("adjClose", out var adjProp) &&
+                                    adjProp.ValueKind == JsonValueKind.Number;
                     var open  = GetDecimal(item, "adjOpen")  ?? GetDecimal(item, "open");
                     var high  = GetDecimal(item, "adjHigh")  ?? GetDecimal(item, "high");
                     var low   = GetDecimal(item, "adjLow")   ?? GetDecimal(item, "low");
@@ -117,13 +119,14 @@ namespace StockPicker.Services
 
                     quotes.Add(new StockQuote
                     {
-                        Symbol    = symbol,
-                        Timestamp = date.Date,
-                        Open      = open.Value,
-                        High      = high ?? open.Value,
-                        Low       = low  ?? open.Value,
-                        Close     = close.Value,
-                        Volume    = volume,
+                        Symbol     = symbol,
+                        Timestamp  = date.Date,
+                        Open       = open.Value,
+                        High       = high ?? open.Value,
+                        Low        = low  ?? open.Value,
+                        Close      = close.Value,
+                        Volume     = volume,
+                        IsAdjusted = adjusted,
                     });
                 }
 

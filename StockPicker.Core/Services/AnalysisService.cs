@@ -35,7 +35,10 @@ namespace StockPicker.Services
             if (history.Count == 0)
                 return Task.FromResult(result);
 
-            AppendTargetEstimate(result, stock.Symbol, history, context);
+            // The analog-matching estimate is O(history²) — the backtest engine replays
+            // thousands of analyses and computes real outcome stats instead, so it opts out.
+            if (!context.SkipTargetEstimate)
+                AppendTargetEstimate(result, stock.Symbol, history, context);
             return Task.FromResult(result);
         }
 
@@ -82,6 +85,8 @@ namespace StockPicker.Services
                 "mean-reversion" => ScoreMeanReversion(closes, sma20, sma50, rsi14, weekReturn, result),
                 "breakout"       => ScoreBreakout(closes, volumes, sma20, rsi14, volTrend, result),
                 "buy-and-hold"   => ScoreBuyAndHold(closes, sma20, sma50, rsi14, weekReturn, result),
+                "value"          => ScoreValue(symbol, closes, context, result),
+                "52w-high"       => Score52WeekHigh(history, closes, rsi14, weekReturn, volTrend, result),
                 _                => ScoreMomentum(weekReturn, sma20, sma50, rsi14, volTrend, result),
             };
 
@@ -223,6 +228,32 @@ namespace StockPicker.Services
                 result.Signals.Add($"Strong rise {weekReturn:+0.##;-0.##}% — extended, watch for fade");
             }
 
+            // Bollinger refinement: a close below the lower band is a *statistical*
+            // stretch (2σ), stronger evidence than raw %-below-SMA20 alone — the band
+            // widens in volatile names, so a fixed % threshold over-fires on them.
+            var (bbMid, bbUpper, bbLower, bbWidthPct) = Bollinger(closes);
+            if (bbLower.HasValue && bbMid.HasValue)
+            {
+                double last2 = closes[^1];
+                if (last2 < bbLower.Value)
+                {
+                    score += 1.0;
+                    result.Signals.Add("Close below lower Bollinger band (2σ) — statistically stretched");
+                }
+                else if (last2 < bbLower.Value + 0.25 * (bbMid.Value - bbLower.Value))
+                {
+                    score += 0.5;
+                    result.Signals.Add("Close in the lower Bollinger quartile");
+                }
+
+                // A tight squeeze means nothing is stretched — reversion has no fuel.
+                if (bbWidthPct is < 3.0)
+                {
+                    score -= 0.4;
+                    result.Signals.Add($"Bollinger bands tight ({bbWidthPct:F1}%) — little stretch to revert");
+                }
+            }
+
             return Math.Round(score, 3);
         }
 
@@ -296,6 +327,40 @@ namespace StockPicker.Services
             {
                 score -= 0.3;
                 result.Signals.Add($"RSI14 extremely overbought ({rsi14:F1}) — breakout may be extended");
+            }
+
+            // Bollinger refinement: the highest-quality breakouts fire out of a volatility
+            // SQUEEZE (bands pinched vs their recent norm) — a coiled spring releasing —
+            // rather than out of an already-loose, choppy range.
+            var (_, bbUpper, _, bbWidthPct) = Bollinger(closes);
+            if (bbUpper.HasValue && bbWidthPct.HasValue && closes.Length >= 40)
+            {
+                // Average band width over the prior ~40 bars as the "normal" width.
+                double priorWidthSum = 0; int priorN = 0;
+                for (int end = closes.Length - 5; end >= 20 && priorN < 8; end -= 5)
+                {
+                    var (_, _, _, w) = Bollinger(closes[..end]);
+                    if (w.HasValue) { priorWidthSum += w.Value; priorN++; }
+                }
+                double? normalWidth = priorN > 0 ? priorWidthSum / priorN : null;
+
+                bool aboveUpper = last > bbUpper.Value;
+                bool squeezed   = normalWidth.HasValue && bbWidthPct.Value < normalWidth.Value * 0.65;
+
+                if (squeezed && aboveUpper)
+                {
+                    score += 1.0;
+                    result.Signals.Add($"Bollinger squeeze fired — bands {bbWidthPct:F1}% vs normal {normalWidth:F1}%, close above upper band");
+                }
+                else if (aboveUpper)
+                {
+                    score += 0.4;
+                    result.Signals.Add("Close above upper Bollinger band — expansion underway");
+                }
+                else if (squeezed)
+                {
+                    result.Signals.Add($"Bollinger squeeze building ({bbWidthPct:F1}% vs normal {normalWidth:F1}%) — watch for the break");
+                }
             }
 
             return Math.Round(score, 3);
@@ -406,7 +471,180 @@ namespace StockPicker.Services
             return Math.Round(score, 3);
         }
 
+        /// <summary>
+        /// Value: buys statistically cheap stocks — low P/E and P/B with positive
+        /// earnings and an income cushion. The only fundamental (non-price-action)
+        /// strategy; requires <see cref="ScanContext.Summaries"/>.
+        /// NOT point-in-time backtestable: fundamentals are a TODAY-only snapshot,
+        /// so replaying it against historical prices would leak future information.
+        /// </summary>
+        private static double ScoreValue(
+            string symbol, double[] closes, ScanContext context, AnalysisResult result)
+        {
+            QuoteSummary? qs = null;
+            context.Summaries?.TryGetValue(symbol, out qs);
+            if (qs == null)
+            {
+                result.Signals.Add("No fundamental data available — Value strategy needs live quote summaries (run a scan).");
+                return 0;
+            }
+
+            double score = 0;
+
+            // Earnings quality first: negative earnings disqualify "cheap" — it's just cheap.
+            if (qs.EPS is double eps)
+            {
+                if (eps <= 0)
+                {
+                    score -= 1.5;
+                    result.Signals.Add($"Negative earnings (EPS {eps:F2}) — cheapness is a warning, not a bargain");
+                }
+                else
+                {
+                    score += 0.3;
+                    result.Signals.Add($"Profitable (EPS ${eps:F2})");
+                }
+            }
+
+            // Price / Earnings
+            if (qs.PERatio is double pe && pe > 0)
+            {
+                result.Indicators["P/E"] = Math.Round(pe, 1);
+                if      (pe < 10) { score += 1.5; result.Signals.Add($"Deep value P/E {pe:F1}"); }
+                else if (pe < 15) { score += 1.0; result.Signals.Add($"Attractive P/E {pe:F1}"); }
+                else if (pe < 20) { score += 0.4; result.Signals.Add($"Reasonable P/E {pe:F1}"); }
+                else if (pe > 35) { score -= 1.0; result.Signals.Add($"Expensive P/E {pe:F1}"); }
+            }
+
+            // Improving earnings: forward P/E below trailing means estimates are rising.
+            if (qs.PERatio is double trailing and > 0 && qs.ForwardPE is double fwd and > 0 && fwd < trailing)
+            {
+                score += 0.5;
+                result.Signals.Add($"Forward P/E {fwd:F1} < trailing {trailing:F1} — earnings expected to grow");
+            }
+
+            // Price / Book
+            if (qs.PriceToBook is double pb && pb > 0)
+            {
+                result.Indicators["P/B"] = Math.Round(pb, 2);
+                if      (pb < 1.0) { score += 1.0; result.Signals.Add($"Below book value (P/B {pb:F2})"); }
+                else if (pb < 2.0) { score += 0.5; result.Signals.Add($"Modest P/B {pb:F2}"); }
+                else if (pb > 6.0) { score -= 0.5; result.Signals.Add($"Rich P/B {pb:F2}"); }
+            }
+
+            // Income cushion while waiting for the rerating.
+            if (qs.DividendYieldPct is double dy && dy > 0)
+            {
+                result.Indicators["DivYield%"] = Math.Round(dy, 2);
+                if      (dy >= 4.0) { score += 0.7; result.Signals.Add($"Strong dividend yield {dy:F1}%"); }
+                else if (dy >= 2.0) { score += 0.5; result.Signals.Add($"Dividend yield {dy:F1}%"); }
+            }
+
+            // Value-trap guard: extreme volatility usually means the market is pricing
+            // real distress, not mispricing.
+            double dailyVol = Volatility(closes);
+            if (dailyVol > 4.0)
+            {
+                score -= 0.5;
+                result.Signals.Add($"High volatility ({dailyVol:F1}%/day) — possible value trap");
+            }
+            else if (dailyVol > 0 && dailyVol < 2.0)
+            {
+                score += 0.3;
+                result.Signals.Add($"Stable price action ({dailyVol:F1}%/day)");
+            }
+
+            return Math.Round(score, 3);
+        }
+
+        /// <summary>
+        /// 52-week high momentum: buys strength within a few percent of the yearly high —
+        /// the documented anomaly (George &amp; Hwang 2004) that stocks near their 52-week
+        /// high tend to keep outperforming (anchoring makes investors underreact to the
+        /// news that pushed them there). Uses the fetched window's high when fewer than
+        /// 252 bars are available, and says so.
+        /// </summary>
+        private static double Score52WeekHigh(
+            IReadOnlyList<StockQuote> history, double[] closes,
+            double rsi14, double weekReturn, double volTrend,
+            AnalysisResult result)
+        {
+            double score = 0;
+            double last  = closes[^1];
+
+            int window = Math.Min(252, history.Count);
+            double high = 0;
+            for (int i = history.Count - window; i < history.Count; i++)
+                high = Math.Max(high, (double)history[i].High);
+            if (high <= 0) return 0;
+
+            double pctFromHigh = ((last - high) / high) * 100.0;
+            result.Indicators["PctFrom52wHigh"] = Math.Round(pctFromHigh, 2);
+            string windowNote = window < 252 ? $" ({window}-day window)" : "";
+
+            if (pctFromHigh >= -2.0)
+            {
+                score += 2.5;
+                result.Signals.Add($"Within 2% of the 52-week high{windowNote} — strength begets strength");
+            }
+            else if (pctFromHigh >= -5.0)
+            {
+                score += 1.5;
+                result.Signals.Add($"Within 5% of the 52-week high{windowNote}");
+            }
+            else if (pctFromHigh >= -10.0)
+            {
+                score += 0.5;
+                result.Signals.Add($"{-pctFromHigh:F1}% below the 52-week high{windowNote}");
+            }
+            else if (pctFromHigh <= -30.0)
+            {
+                score -= 2.0;
+                result.Signals.Add($"{-pctFromHigh:F0}% below the 52-week high{windowNote} — not this strategy's setup");
+            }
+            else
+            {
+                score -= 0.5;
+                result.Signals.Add($"{-pctFromHigh:F1}% below the 52-week high{windowNote}");
+            }
+
+            // Confirmation: still advancing, not rolling over at the high.
+            if      (weekReturn > 2.0)  { score += 0.5; result.Signals.Add($"Approaching on strength ({weekReturn:+0.##}% this window)"); }
+            else if (weekReturn < -3.0) { score -= 0.5; result.Signals.Add($"Rolling over ({weekReturn:+0.##;-0.##}%) near the high"); }
+
+            if (volTrend > 1.3) { score += 0.4; result.Signals.Add($"Volume expanding ({volTrend:P0} of baseline)"); }
+
+            if      (rsi14 >= 55 && rsi14 <= 75) { score += 0.4; result.Signals.Add($"RSI14 in the momentum zone ({rsi14:F1})"); }
+            else if (rsi14 > 85)                 { score -= 0.3; result.Signals.Add($"RSI14 stretched ({rsi14:F1})"); }
+
+            return Math.Round(score, 3);
+        }
+
         // ── Technical indicator math ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Bollinger bands over the last <paramref name="period"/> bars:
+        /// middle = SMA, upper/lower = ±<paramref name="k"/> standard deviations,
+        /// width = (upper − lower) / middle as a percent. Nulls when insufficient data.
+        /// </summary>
+        private static (double? Mid, double? Upper, double? Lower, double? WidthPct)
+            Bollinger(double[] closes, int period = 20, double k = 2.0)
+        {
+            if (closes.Length < period) return (null, null, null, null);
+
+            double sum = 0;
+            for (int i = closes.Length - period; i < closes.Length; i++) sum += closes[i];
+            double mid = sum / period;
+
+            double var = 0;
+            for (int i = closes.Length - period; i < closes.Length; i++)
+                var += (closes[i] - mid) * (closes[i] - mid);
+            double sd = Math.Sqrt(var / period);
+
+            double upper = mid + k * sd, lower = mid - k * sd;
+            double? width = mid != 0 ? ((upper - lower) / mid) * 100.0 : (double?)null;
+            return (mid, upper, lower, width);
+        }
 
         /// <summary>Simple moving average of the last <paramref name="period"/> bars.</summary>
         private static double? Sma(double[] closes, int period)
@@ -419,38 +657,15 @@ namespace StockPicker.Services
         }
 
         /// <summary>
-        /// Wilder's RSI over the last <paramref name="period"/> bars.
+        /// Wilder's RSI over the full series (shared implementation).
         /// Returns 50 if there are fewer bars than period+1.
+        /// NOTE: the previous local version seeded on the LAST period changes, which
+        /// meant the smoothing loop never ran — it was effectively a simple-average
+        /// RSI despite the comment. The shared version seeds on the first period
+        /// changes and smooths through the whole series, per Wilder's definition.
         /// </summary>
         private static double Rsi(double[] closes, int period)
-        {
-            if (closes.Length < period + 1) return 50.0;
-
-            double avgGain = 0, avgLoss = 0;
-
-            // Initial averages over the first [period] changes
-            int start = closes.Length - period - 1;
-            for (int i = start; i < start + period; i++)
-            {
-                double chg = closes[i + 1] - closes[i];
-                if (chg > 0) avgGain += chg;
-                else         avgLoss += -chg;
-            }
-            avgGain /= period;
-            avgLoss /= period;
-
-            // Smooth subsequent bars (Wilder smoothing)
-            for (int i = start + period; i < closes.Length - 1; i++)
-            {
-                double chg = closes[i + 1] - closes[i];
-                avgGain = (avgGain * (period - 1) + (chg > 0 ? chg : 0)) / period;
-                avgLoss = (avgLoss * (period - 1) + (chg < 0 ? -chg : 0)) / period;
-            }
-
-            if (avgLoss == 0) return 100;
-            double rs = avgGain / avgLoss;
-            return Math.Round(100.0 - (100.0 / (1 + rs)), 1);
-        }
+            => Math.Round(Indicators.RsiWilder(closes, period), 1);
 
         /// <summary>
         /// Ratio of average volume over the last <paramref name="recentDays"/> bars
