@@ -1,0 +1,95 @@
+name: Release
+
+# Publishes a GitHub Release with self-contained win-x64 builds of the desktop app
+# and the CLI. Fires automatically when a v* tag is pushed, and can also be run
+# manually from the Actions tab against an existing tag.
+#
+# Auth: uses the built-in GITHUB_TOKEN (permissions.contents: write) — no PAT,
+# no `gh auth login`, no secrets required for the default (unsigned) build.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (e.g. v1.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = '${{ github.event.inputs.tag }}'
+          if ([string]::IsNullOrEmpty($tag)) { $tag = '${{ github.ref_name }}' }
+          "tag=$tag"                       >> $env:GITHUB_OUTPUT
+          "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $tag"
+
+      - name: Publish desktop (self-contained, single-file, win-x64)
+        run: dotnet publish StockPicker/StockPicker.csproj -c Release -r win-x64 -o publish/desktop
+
+      - name: Publish CLI (self-contained, single-file, win-x64)
+        run: >
+          dotnet publish StockPicker.Cli/StockPicker.Cli.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -o publish/cli
+
+      # ── Optional Authenticode signing (Azure Trusted Signing) ───────────────
+      # Disabled by default so the workflow succeeds with no certificate.
+      # To enable: set repo variable SIGNING_ENABLED = true and add the secrets /
+      # variables referenced below. See docs/SIGNING.md for full setup.
+      - name: Sign executables
+        if: ${{ vars.SIGNING_ENABLED == 'true' }}
+        uses: azure/trusted-signing-action@v0.5.9   # verify latest at github.com/Azure/trusted-signing-action
+        with:
+          azure-tenant-id:               ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:               ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:           ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                      ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name:  ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name:      ${{ vars.TRUSTED_SIGNING_PROFILE }}
+          files-folder:                  ${{ github.workspace }}\publish
+          files-folder-filter:           exe
+          files-folder-recurse:          true
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive publish/desktop/StockPicker.exe "dist/StockPicker-Desktop-v$v-win-x64.zip" -Force
+          Compress-Archive publish/cli/stockpicker.exe      "dist/StockPicker-CLI-v$v-win-x64.zip"      -Force
+          Get-FileHash dist/*.zip -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash, [IO.Path]::GetFileName($_.Path) } |
+            Out-File dist/SHA256SUMS.txt -Encoding ascii
+
+      - name: Create / update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: StockPicker ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            Self-contained **Windows x64** builds — no .NET install required.
+            Unzip and run the `.exe`. See `CHANGELOG.md` for the full change list.
+
+            > ⚠️ Not investment advice. Algorithmic heuristics for research/education only.
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
