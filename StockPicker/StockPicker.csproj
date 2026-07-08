@@ -9,6 +9,7 @@
     <RootNamespace>StockPicker</RootNamespace>
     <AssemblyName>StockPicker</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <Version>1.1.0</Version>
 
     <!-- ── Single-file self-contained publish ──────────────────────────
          Run: dotnet publish -c Release -r win-x64
