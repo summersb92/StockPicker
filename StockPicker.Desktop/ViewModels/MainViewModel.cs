@@ -1553,8 +1553,14 @@ namespace StockPicker.Desktop.ViewModels
             get => _isChartYear;
             set
             {
-                if (SetProperty(ref _isChartYear, value) && value)
+                // Reload on ANY range change (1W→1Y sets true, 1Y→1W sets false via
+                // IsChartWeek) — guarding on `value` broke the 1Y→1W direction, which
+                // then only refreshed on the next stock reselection.
+                if (SetProperty(ref _isChartYear, value))
+                {
+                    OnPropertyChanged(nameof(IsChartWeek));
                     _ = LoadChartAsync();
+                }
             }
         }
 
