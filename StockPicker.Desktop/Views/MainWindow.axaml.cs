@@ -6,9 +6,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -44,11 +46,15 @@ public partial class MainWindow : Window
 {
     private const double CompactBreakpoint = 1100.0;
 
-    // Row action-tint brushes (mirror the WPF DataTrigger colours).
-    private static readonly IBrush StrongBuyBrush  = Brush.Parse("#CDEBD6");
-    private static readonly IBrush BuyBrush        = Brush.Parse("#EAF7EE");
-    private static readonly IBrush SellBrush       = Brush.Parse("#FBE7EA");
-    private static readonly IBrush StrongSellBrush = Brush.Parse("#F4CBD2");
+    // Row action-tint style classes. Each maps to a DataGridRow.tint* selector in
+    // ModernTheme.axaml (colours mirror the WPF DataTrigger palette). Tints are applied
+    // as classes rather than a local Row.Background because a local value outranks every
+    // style — including the :pointerover hover highlight, which it used to suppress.
+    private const string TintStrongBuy  = "tintStrongBuy";
+    private const string TintBuy        = "tintBuy";
+    private const string TintSell       = "tintSell";
+    private const string TintStrongSell = "tintStrongSell";
+    private static readonly string[] TintClasses = { TintStrongBuy, TintBuy, TintSell, TintStrongSell };
 
     // Recommendations-grid column index → visibility toggle. Indices MUST match the
     // column order declared in MainWindow.axaml (0 Symbol / 2 Action are always shown).
@@ -198,21 +204,21 @@ public partial class MainWindow : Window
     // ── Glossary-backed header tooltips ─────────────────────────────────────────
 
     /// <summary>
-    /// Sources the Recommendations-grid header tooltips from the canonical
-    /// <see cref="Glossary"/> so a term is documented in exactly one place. Only columns
-    /// that map to a real Glossary key are touched; every other header is left as-is.
+    /// Sources every data grid's header tooltips from the canonical <see cref="Glossary"/>
+    /// (via <see cref="GlossaryTooltips"/>) so a term is documented in exactly one place.
+    /// Only columns that map to a real Glossary key are touched; every other header is
+    /// left as-is.
     /// </summary>
     /// <remarks>
     /// Column indices match the <c>DataGrid.Columns</c> declaration order in MainWindow.axaml
-    /// (the same convention <see cref="BuildRecColumnMap"/> relies on). Where Phase 6B set an
-    /// inline <c>TextBlock</c> header with a hard-coded tooltip, that tooltip is replaced by the
-    /// Glossary one; plain-string headers are wrapped in a <c>TextBlock</c> that preserves their
-    /// display text so <see cref="GetColumnKey"/> (used for column-order persistence) is unaffected.
+    /// (the same convention <see cref="BuildRecColumnMap"/> relies on). Headers are wrapped in
+    /// <c>TextBlock</c>s that preserve their display text, so <see cref="GetColumnKey"/> (used
+    /// for column-order persistence) is unaffected.
     /// </remarks>
     private void ApplyGlossaryHeaderTooltips()
     {
         // Full recommendations grid: column index → Glossary key.
-        ApplyGlossaryTooltips(FullRecsGrid, new Dictionary<int, string>
+        GlossaryTooltips.Apply(FullRecsGrid, new Dictionary<int, string>
         {
             [0]  = "Symbol",
             [2]  = "Action",
@@ -229,7 +235,7 @@ public partial class MainWindow : Window
         });
 
         // Compact recommendations grid (narrow layout): fewer columns, same source of truth.
-        ApplyGlossaryTooltips(CompactRecsGrid, new Dictionary<int, string>
+        GlossaryTooltips.Apply(CompactRecsGrid, new Dictionary<int, string>
         {
             [0] = "Symbol",
             [1] = "Action",
@@ -240,32 +246,103 @@ public partial class MainWindow : Window
             [6] = "SellDate",
             [7] = "Confidence",
         });
-    }
 
-    private static void ApplyGlossaryTooltips(DataGrid grid, IReadOnlyDictionary<int, string> map)
-    {
-        var cols = grid.Columns;
-        foreach (var (index, key) in map)
+        // Daily Picks (intraday) grids.
+        GlossaryTooltips.Apply(DayPicksGridFull, new Dictionary<int, string>
         {
-            if (index >= cols.Count) continue;
-            if (!Glossary.TryGet(key, out var def) || def is null) continue;
+            [0]  = "Symbol",
+            [1]  = "Direction",
+            [2]  = "IntraDayScore",
+            [3]  = "Confidence",
+            [5]  = "LastPrice",
+            [6]  = "DayChangePct",
+            [10] = "RSI14",
+            [11] = "EntryPrice",
+            [12] = "StopLoss",
+            [13] = "Target",
+            [14] = "RiskRewardRatio",
+            [15] = "TriggerReason",
+        });
+        GlossaryTooltips.Apply(DayPicksGridCompact, new Dictionary<int, string>
+        {
+            [0] = "Symbol",
+            [1] = "Direction",
+            [2] = "IntraDayScore",
+            [3] = "Confidence",
+            [5] = "LastPrice",
+            [6] = "DayChangePct",
+            [7] = "RiskRewardRatio",
+            [8] = "TriggerReason",
+        });
 
-            var col = cols[index];
-            if (col.Header is TextBlock tb)
-            {
-                // Inline TextBlock header (Phase 6B) — retarget its tooltip to the Glossary.
-                ToolTip.SetTip(tb, def.Tooltip);
-            }
-            else
-            {
-                // Plain-string header — wrap it so ToolTip.Tip attaches to a Control while the
-                // displayed text (and thus the persisted column key) stays identical.
-                var text = col.Header as string ?? col.Header?.ToString() ?? key;
-                var header = new TextBlock { Text = text };
-                ToolTip.SetTip(header, def.Tooltip);
-                col.Header = header;
-            }
-        }
+        // Earnings grids.
+        GlossaryTooltips.Apply(EarningsGridFull, new Dictionary<int, string>
+        {
+            [0]  = "Symbol",
+            [1]  = "NextEarningsDate",
+            [2]  = "DaysUntilEarnings",
+            [3]  = "LastPrice",
+            [4]  = "DayChangePct",
+            [5]  = "ExpectedMovePct",
+            [6]  = "LikelihoodScore",
+            [7]  = "MeetsThreshold",
+            [8]  = "MomentumPct",
+            [9]  = "Leverage",
+            [12] = "TriggerReason",
+        });
+        GlossaryTooltips.Apply(EarningsGridCompact, new Dictionary<int, string>
+        {
+            [0] = "Symbol",
+            [1] = "NextEarningsDate",
+            [2] = "ExpectedMovePct",
+            [3] = "LikelihoodScore",
+            [4] = "MeetsThreshold",
+            [6] = "TriggerReason",
+        });
+
+        // Watch grids.
+        GlossaryTooltips.Apply(WatchGridFull, new Dictionary<int, string>
+        {
+            [0]  = "Symbol",
+            [1]  = "Action",
+            [4]  = "LastPrice",
+            [6]  = "DayChangePct",
+            [7]  = "BuyDate",
+            [8]  = "SellDate",
+            [10] = "Reasoning",
+        });
+        GlossaryTooltips.Apply(WatchGridCompact, new Dictionary<int, string>
+        {
+            [0] = "Symbol",
+            [2] = "LastPrice",
+            [4] = "DayChangePct",
+            [5] = "Action",
+        });
+
+        // Positions (held) grids. "Gain %" shows EffectiveGainPct, which is the return on
+        // the equity actually invested (identical to the price return for cash positions),
+        // so ReturnOnEquityPct is the matching term.
+        GlossaryTooltips.Apply(HeldGridFull, new Dictionary<int, string>
+        {
+            [0]  = "Symbol",
+            [2]  = "EntryDate",
+            [3]  = "PlannedSellDate",
+            [4]  = "EntryPrice",
+            [5]  = "ShareCount",
+            [6]  = "Leverage",
+            [9]  = "ReturnOnEquityPct",
+            [10] = "HoldingPeriod",
+        });
+        GlossaryTooltips.Apply(HeldGridCompact, new Dictionary<int, string>
+        {
+            [0] = "Symbol",
+            [2] = "EntryDate",
+            [3] = "PlannedSellDate",
+            [4] = "EntryPrice",
+            [5] = "Leverage",
+            [6] = "ReturnOnEquityPct",
+            [7] = "HoldingPeriod",
+        });
     }
 
     // ── Sort persistence ──────────────────────────────────────────────────────
@@ -273,24 +350,57 @@ public partial class MainWindow : Window
     private void RestoreSortToGrid(MainViewModel vm)
     {
         var view = vm.RecommendationsView;
-        view.SortDescriptions.Clear();
 
         if (string.IsNullOrEmpty(vm.SavedSortColumn))
         {
-            // Default sort: Confidence DESC, action rank ASC, then Symbol ASC.
+            // Default sort: Confidence DESC, action rank ASC, then Symbol ASC. A composite
+            // sort has no single owning column, so it is applied straight to the view (the
+            // grid refreshes every header's sort glyph whenever SortDescriptions changes).
+            view.SortDescriptions.Clear();
             view.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Recommendation.Confidence),      ListSortDirection.Descending));
             view.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Recommendation.ActionSortOrder), ListSortDirection.Ascending));
             view.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Recommendation.Symbol),          ListSortDirection.Ascending));
-        }
-        else
-        {
-            var dir = vm.SavedSortDirection == "Descending"
-                ? ListSortDirection.Descending
-                : ListSortDirection.Ascending;
-            view.SortDescriptions.Add(DataGridSortDescription.FromPath(vm.SavedSortColumn, dir));
+            view.Refresh();
+            return;
         }
 
+        var dir = vm.SavedSortDirection == "Descending"
+            ? ListSortDirection.Descending
+            : ListSortDirection.Ascending;
+
+        // Sort the view first so the row order is guaranteed even if the header cells
+        // aren't realized yet.
+        view.SortDescriptions.Clear();
+        view.SortDescriptions.Add(DataGridSortDescription.FromPath(vm.SavedSortColumn, dir));
         view.Refresh();
+
+        // Then sync the header glyph: DataGridColumn.Sort(direction) drives the same code
+        // path as a header click, which updates the header's :sortascending /
+        // :sortdescending pseudo-classes. With the matching description already in place
+        // it re-adds the identical sort, so the row order is unaffected. (No column will
+        // match when the saved path came from an older layout — rows still sort; there is
+        // simply no header to glyph.)
+        FullRecsGrid.Columns.FirstOrDefault(c => GetSortPath(c) == vm.SavedSortColumn)?.Sort(dir);
+    }
+
+    /// <summary>
+    /// The property path a column sorts by: <c>SortMemberPath</c>, else the bound
+    /// property. Mirrors the DataGrid's internal <c>GetSortPropertyName</c> so the
+    /// persisted <c>SavedSortColumn</c> (written from the resulting sort description's
+    /// <c>PropertyPath</c> in <see cref="FullRecsGrid_Sorting"/>) can be matched back to
+    /// its column on restore.
+    /// </summary>
+    private static string? GetSortPath(DataGridColumn col)
+    {
+        if (!string.IsNullOrEmpty(col.SortMemberPath))
+            return col.SortMemberPath;
+
+        return (col as DataGridBoundColumn)?.Binding switch
+        {
+            Binding b                   => b.Path,
+            CompiledBindingExtension cb => cb.Path?.ToString(),
+            _                           => null,
+        };
     }
 
     private void FullRecsGrid_Sorting(object? sender, DataGridColumnEventArgs e)
@@ -365,49 +475,61 @@ public partial class MainWindow : Window
 
     // ── Row tint / context-menu / tooltip handlers ──────────────────────────────
 
+    /// <summary>
+    /// Replaces the action-tint class on a row. LoadingRow fires on realize AND recycle,
+    /// so any stale tint class from the row's previous item must be removed first.
+    /// </summary>
+    private static void SetRowTint(DataGridRow row, string? tintClass)
+    {
+        foreach (var c in TintClasses)
+            row.Classes.Remove(c);
+        if (tintClass is not null)
+            row.Classes.Add(tintClass);
+    }
+
     private void RecsRow_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (e.Row.DataContext is not Recommendation r) { e.Row.Background = null; return; }
-        e.Row.Background = r.Action switch
+        if (e.Row.DataContext is not Recommendation r) { SetRowTint(e.Row, null); return; }
+        SetRowTint(e.Row, r.Action switch
         {
-            RecommendationAction.StrongBuy  => StrongBuyBrush,
-            RecommendationAction.Buy        => BuyBrush,
-            RecommendationAction.Sell       => SellBrush,
-            RecommendationAction.StrongSell => StrongSellBrush,
+            RecommendationAction.StrongBuy  => TintStrongBuy,
+            RecommendationAction.Buy        => TintBuy,
+            RecommendationAction.Sell       => TintSell,
+            RecommendationAction.StrongSell => TintStrongSell,
             _                               => null,
-        };
+        });
         AttachRowContextMenu(e.Row, r.Symbol);
         ToolTip.SetTip(e.Row, BuildRecTooltip(r));
     }
 
     private void DayPickRow_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (e.Row.DataContext is not DayPick d) { e.Row.Background = null; return; }
-        e.Row.Background = d.Direction switch
+        if (e.Row.DataContext is not DayPick d) { SetRowTint(e.Row, null); return; }
+        SetRowTint(e.Row, d.Direction switch
         {
-            DayPickDirection.Long  => BuyBrush,
-            DayPickDirection.Short => SellBrush,
+            DayPickDirection.Long  => TintBuy,
+            DayPickDirection.Short => TintSell,
             _                      => null,
-        };
+        });
         ToolTip.SetTip(e.Row, BuildSignalTooltip(d.Symbol, d.CompanyName, d.TriggerReason, d.GeneratedAt));
     }
 
     private void EarningsRow_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (e.Row.DataContext is not EarningsPick ep) { e.Row.Background = null; return; }
-        e.Row.Background = ep.MeetsThreshold ? BuyBrush : null;
+        if (e.Row.DataContext is not EarningsPick ep) { SetRowTint(e.Row, null); return; }
+        SetRowTint(e.Row, ep.MeetsThreshold ? TintBuy : null);
         ToolTip.SetTip(e.Row, BuildSignalTooltip(ep.Symbol, ep.CompanyName, ep.TriggerReason, ep.GeneratedAt));
     }
 
     private void WatchRow_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (e.Row.DataContext is not Recommendation r) { e.Row.Background = null; return; }
-        e.Row.Background = r.WatchIsUp switch
+        if (e.Row.DataContext is not Recommendation r) { SetRowTint(e.Row, null); return; }
+        SetRowTint(e.Row, r.WatchIsUp switch
         {
-            true  => BuyBrush,
-            false => SellBrush,
+            true  => TintBuy,
+            false => TintSell,
             null  => null,
-        };
+        });
         AttachRowContextMenu(e.Row, r.Symbol);
         var watch = new StackPanel();
         watch.Children.Add(new TextBlock { Text = r.Symbol, FontWeight = FontWeight.Bold, FontSize = 13 });
@@ -430,13 +552,13 @@ public partial class MainWindow : Window
 
     private void HeldRow_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        if (e.Row.DataContext is not HeldPosition h) { e.Row.Background = null; return; }
-        e.Row.Background = h.IsProfit switch
+        if (e.Row.DataContext is not HeldPosition h) { SetRowTint(e.Row, null); return; }
+        SetRowTint(e.Row, h.IsProfit switch
         {
-            true  => BuyBrush,
-            false => SellBrush,
+            true  => TintBuy,
+            false => TintSell,
             null  => null,
-        };
+        });
         AttachRowContextMenu(e.Row, h.Symbol);
     }
 

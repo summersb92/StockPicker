@@ -5,7 +5,6 @@ using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
-using Avalonia.Media;
 using StockPicker.Models;
 
 namespace StockPicker.Desktop.Views;
@@ -21,7 +20,9 @@ namespace StockPicker.Desktop.Views;
 /// <list type="bullet">
 ///   <item>WPF <c>DataGrid.RowStyle</c> + <c>DataTrigger</c>s that tinted rows by
 ///   transaction Type are reproduced in <see cref="HistoryGrid_LoadingRow"/> (Avalonia has
-///   no row-style triggers). LoadingRow fires on realize and on recycle, so the tint stays
+///   no row-style triggers), which assigns <c>tintTx*</c> style classes (styled in
+///   ModernTheme.axaml — a class keeps the tint below the row hover highlight, unlike a
+///   local Background). LoadingRow fires on realize and on recycle, so the tint stays
 ///   correct under virtualization.</item>
 ///   <item>WPF <c>SortMemberPath</c> (sort formatted Date/Cash/Realized columns by their
 ///   underlying values) has no Avalonia column property; reproduced with
@@ -32,9 +33,12 @@ namespace StockPicker.Desktop.Views;
 /// </remarks>
 public partial class TransactionHistoryWindow : Window
 {
-    private static readonly IBrush BuyBrush        = Brush.Parse("#EEF3FB");
-    private static readonly IBrush SellBrush       = Brush.Parse("#E8F5E9");
-    private static readonly IBrush WithdrawalBrush = Brush.Parse("#FFF3E0");
+    // Row tint style classes by transaction Type — see DataGridRow.tintTx* in
+    // Themes/ModernTheme.axaml.
+    private const string TintBuy        = "tintTxBuy";
+    private const string TintSell       = "tintTxSell";
+    private const string TintWithdrawal = "tintTxWithdrawal";
+    private static readonly string[] TintClasses = { TintBuy, TintSell, TintWithdrawal };
 
     public TransactionHistoryWindow() : this(Array.Empty<Transaction>()) { }
 
@@ -50,6 +54,19 @@ public partial class TransactionHistoryWindow : Window
         HistoryGrid.Columns[6].CustomSortComparer = new TransactionFieldComparer(t => t.RealizedGain ?? decimal.MinValue); // Realized
 
         HistoryGrid.LoadingRow += HistoryGrid_LoadingRow;
+
+        // Header tooltips sourced from the canonical Glossary (index → key; only columns
+        // whose concept has a real Glossary entry are mapped — "Detail" combines
+        // shares @ price into one display string and is left untouched).
+        GlossaryTooltips.Apply(HistoryGrid, new Dictionary<int, string>
+        {
+            [0] = "Date",
+            [1] = "Type",
+            [2] = "Symbol",
+            [4] = "GrossAmount",
+            [5] = "CashDelta",
+            [6] = "RealizedGain",
+        });
 
         var ordered = transactions.OrderByDescending(t => t.Date)
                                   .ThenByDescending(t => t.Type == TransactionType.Sell)
@@ -82,14 +99,19 @@ public partial class TransactionHistoryWindow : Window
 
     private void HistoryGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
-        // Reset then apply, because rows are recycled during virtualization.
-        e.Row.Background = (e.Row.DataContext as Transaction)?.Type switch
+        // Remove stale classes then apply, because rows are recycled during virtualization.
+        foreach (var c in TintClasses)
+            e.Row.Classes.Remove(c);
+
+        var tint = (e.Row.DataContext as Transaction)?.Type switch
         {
-            TransactionType.Buy        => BuyBrush,
-            TransactionType.Sell       => SellBrush,
-            TransactionType.Withdrawal => WithdrawalBrush,
+            TransactionType.Buy        => TintBuy,
+            TransactionType.Sell       => TintSell,
+            TransactionType.Withdrawal => TintWithdrawal,
             _                          => null,
         };
+        if (tint is not null)
+            e.Row.Classes.Add(tint);
     }
 
     private void Close_Click(object? sender, RoutedEventArgs e) => Close();

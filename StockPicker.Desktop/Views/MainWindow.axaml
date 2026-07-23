@@ -391,9 +391,9 @@
             <Setter Property="BorderBrush" Value="#888" />
         </Style>
 
-        <!-- Recommendations grid: hover highlight sits under the row action tints
-             (which are applied as local values in code-behind via LoadingRow, so
-             this only shows on untinted rows / where no tint applies). -->
+        <!-- Row action tints + hover highlight: see the DataGridRow.tint* and
+             DataGridRow:pointerover styles in Themes/ModernTheme.axaml. Tint classes
+             are assigned per row by the LoadingRow handlers in code-behind. -->
     </Window.Styles>
 
     <Grid Margin="12">
@@ -563,11 +563,12 @@
                                       CanUserReorderColumns="True"
                                       CanUserSortColumns="True">
                                 <!-- MIGRATION NOTE: WPF AlternatingRowBackground / RowStyle / ColumnHeaderStyle
-                                     have no Avalonia DataGrid equivalent. Row action tints + per-row context
-                                     menu + hover tooltip are applied via the LoadingRow handler in code-behind;
-                                     column-header tooltips are set inline on the header content below. Sorting
-                                     persistence + column-reorder persistence are wired to the VM in code-behind
-                                     (Sorting / ColumnReordered events). -->
+                                     have no Avalonia DataGrid equivalent. Row action tints (style classes,
+                                     see ModernTheme.axaml) + per-row context menu + hover tooltip are applied
+                                     via the LoadingRow handler in code-behind; column-header tooltips are
+                                     sourced from the Glossary in code-behind (ApplyGlossaryHeaderTooltips).
+                                     Sorting persistence + column-reorder persistence are wired to the VM in
+                                     code-behind (Sorting / ColumnReordered events). -->
                                 <DataGrid.Columns>
                                     <!-- 0: Symbol + Company Name (always visible) -->
                                     <DataGridTemplateColumn Header="Symbol" Width="110" SortMemberPath="Symbol">

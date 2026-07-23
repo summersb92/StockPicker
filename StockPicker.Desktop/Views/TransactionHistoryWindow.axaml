@@ -21,8 +21,10 @@
 
         <!-- MIGRATION NOTE:
              * WPF DataGrid.RowStyle + DataTriggers (row tint by transaction Type) has no
-               Avalonia equivalent; reproduced via the LoadingRow event in code-behind
-               (fires on realize AND recycle, so the tint survives scroll virtualization).
+               Avalonia equivalent; reproduced via the LoadingRow event in code-behind,
+               which assigns tintTx* style classes (styled in Themes/ModernTheme.axaml).
+               LoadingRow fires on realize AND recycle, so the tint survives scroll
+               virtualization.
              * WPF AlternatingRowBackground has no Avalonia DataGrid property; dropped (rows
                use the uniform theme background). The Type tint above is the meaningful cue.
              * WPF SortMemberPath (sort the formatted Date/Cash/Realized columns by their

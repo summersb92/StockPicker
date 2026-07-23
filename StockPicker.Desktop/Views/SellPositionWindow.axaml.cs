@@ -40,6 +40,10 @@ public partial class SellPositionWindow : Window
         InitializeComponent();
         _position = position;
 
+        // Field-label tooltip sourced from the canonical Glossary ("Price" — the
+        // per-share price a ledger transaction executes at).
+        GlossaryTooltips.Apply(SellPriceLabel, "Price");
+
         SymbolText.Text = $"{position.Symbol}  {position.CompanyName}".Trim();
         SharesText.Text = $"{position.ShareCount} @ entry ${position.EntryPrice:F2}"
                         + (position.BoughtOnMargin ? $"  ·  {position.Leverage:0.#}× margin" : "");

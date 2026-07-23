@@ -46,7 +46,10 @@
                 <TextBlock Grid.Row="1" Grid.Column="1" x:Name="SharesText" VerticalAlignment="Center"
                            Margin="0,0,0,8" />
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Sell price"  Classes="field" />
+                <!-- Label carries the Glossary "Price" tooltip (set in the constructor);
+                     the input box keeps its task-specific hint. -->
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Sell price"  Classes="field"
+                           x:Name="SellPriceLabel" />
                 <TextBox   Grid.Row="2" Grid.Column="1" x:Name="PriceBox"
                            TextChanged="PriceBox_TextChanged"
                            ToolTip.Tip="Price per share you're selling at (defaults to the latest price)." />

@@ -187,6 +187,46 @@
         <Setter Property="MinHeight" Value="26" />
     </Style>
 
+    <!-- ── Row action tints ─────────────────────────────────────────────────
+         Assigned as style classes by the LoadingRow handlers in code-behind
+         (MainWindow: recommendation/day-pick/earnings/watch/held rows;
+          TransactionHistoryWindow: ledger rows). Classes keep the tint at style
+         priority — the old local Row.Background outranked every style and
+         suppressed the :pointerover hover highlight. Colours mirror the WPF
+         DataTrigger palette. -->
+    <Style Selector="DataGridRow.tintStrongBuy">
+        <Setter Property="Background" Value="#CDEBD6" />
+    </Style>
+    <Style Selector="DataGridRow.tintBuy">
+        <Setter Property="Background" Value="#EAF7EE" />
+    </Style>
+    <Style Selector="DataGridRow.tintSell">
+        <Setter Property="Background" Value="#FBE7EA" />
+    </Style>
+    <Style Selector="DataGridRow.tintStrongSell">
+        <Setter Property="Background" Value="#F4CBD2" />
+    </Style>
+    <!-- Transaction-history ledger tints (Buy / Sell / Withdrawal). -->
+    <Style Selector="DataGridRow.tintTxBuy">
+        <Setter Property="Background" Value="#EEF3FB" />
+    </Style>
+    <Style Selector="DataGridRow.tintTxSell">
+        <Setter Property="Background" Value="#E8F5E9" />
+    </Style>
+    <Style Selector="DataGridRow.tintTxWithdrawal">
+        <Setter Property="Background" Value="#FFF3E0" />
+    </Style>
+
+    <!-- Row hover highlight (WPF IsMouseOver trigger → #FFF3C4). The Fluent row
+         template paints hover on the template's BackgroundRectangle, which is drawn
+         ABOVE the row Background — so this wins over the action tints for every
+         grid. App styles also outrank the Fluent ControlTheme's faint default
+         hover. Selected rows are excluded so the selection visuals stay intact. -->
+    <Style Selector="DataGridRow:pointerover:not(:selected) /template/ Rectangle#BackgroundRectangle">
+        <Setter Property="Fill" Value="#FFF3C4" />
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+
     <Style Selector="DataGridColumnHeader">
         <Setter Property="Background" Value="{StaticResource App.SurfaceAltBrush}" />
         <Setter Property="Foreground" Value="{StaticResource App.TextSecondaryBrush}" />

@@ -171,8 +171,9 @@ namespace StockPicker.Reference
                 "Position partly funded with borrowed money.",
                 "True when the position was partly funded with borrowed money (margin) rather than entirely with your own cash."),
             new("MarginPercent", "Margin percent", TermCategory.Portfolio,
-                "Share of the position funded by borrowing.",
-                "The percentage of the position's cost that was funded by borrowing rather than your own equity.",
+                "Share of the position funded by your own equity (the down-payment).",
+                "The percentage of the position's cost paid with your own equity rather than borrowed money; " +
+                "the remainder is the margin loan. 50% margin therefore means 2× leverage.",
                 Range: "0–100%"),
             new("MarginInterestRatePercent", "Margin interest rate", TermCategory.Portfolio,
                 "Annual interest rate charged on borrowed funds.",

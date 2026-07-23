@@ -54,11 +54,15 @@
                 <TextBox   Grid.Row="1" Grid.Column="1" x:Name="CompanyBox"
                            ToolTip.Tip="Optional company name" />
 
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="Entry price"   Classes="field" />
+                <!-- Field labels carry Glossary-sourced tooltips (set in the constructor);
+                     the input boxes keep their task-specific hints. -->
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Entry price"   Classes="field"
+                           x:Name="EntryPriceLabel" />
                 <TextBox   Grid.Row="2" Grid.Column="1" x:Name="EntryPriceBox"
                            ToolTip.Tip="Price you actually paid per share" />
 
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="Shares"        Classes="field" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Shares"        Classes="field"
+                           x:Name="SharesLabel" />
                 <TextBox   Grid.Row="3" Grid.Column="1" x:Name="SharesBox"
                            ToolTip.Tip="Number of shares held" />
 
@@ -70,12 +74,14 @@
                            ToolTip.Tip="Tick if this position was purchased with borrowed money." />
 
                 <TextBlock Grid.Row="5" Grid.Column="0" Text="Margin %"       Classes="field"
+                           x:Name="MarginPercentLabel"
                            IsEnabled="{Binding #MarginCheck.IsChecked}" />
                 <TextBox   Grid.Row="5" Grid.Column="1" x:Name="MarginPercentBox"
                            IsEnabled="{Binding #MarginCheck.IsChecked}"
                            ToolTip.Tip="Equity you put up, as a % of the position. 50% = 2× leverage." />
 
                 <TextBlock Grid.Row="6" Grid.Column="0" Text="Interest %/yr"  Classes="field"
+                           x:Name="InterestRateLabel"
                            IsEnabled="{Binding #MarginCheck.IsChecked}" />
                 <TextBox   Grid.Row="6" Grid.Column="1" x:Name="MarginRateBox"
                            IsEnabled="{Binding #MarginCheck.IsChecked}"

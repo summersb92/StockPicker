@@ -41,6 +41,12 @@ public partial class PositionEditWindow : Window
 
         HoldingPeriodBox.ItemsSource = Enum.GetValues(typeof(HoldingPeriod));
 
+        // Field-label tooltips sourced from the canonical Glossary.
+        GlossaryTooltips.Apply(EntryPriceLabel,    "EntryPrice");
+        GlossaryTooltips.Apply(SharesLabel,        "ShareCount");
+        GlossaryTooltips.Apply(MarginPercentLabel, "MarginPercent");
+        GlossaryTooltips.Apply(InterestRateLabel,  "MarginInterestRatePercent");
+
         var p = existing ?? new HeldPosition
         {
             EntryDate     = DateTime.Today,
