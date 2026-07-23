@@ -92,11 +92,6 @@ public partial class TransactionHistoryWindow : Window
             $"Sale proceeds ${saleProceeds:N2}  ·  Realized P/L {(realized >= 0 ? "+" : "-")}${Math.Abs(realized):N2}";
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private void HistoryGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
         // Remove stale classes then apply, because rows are recycled during virtualization.

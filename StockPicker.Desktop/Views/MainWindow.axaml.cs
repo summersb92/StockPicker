@@ -98,8 +98,6 @@ public partial class MainWindow : Window
         SizeChanged += Window_SizeChanged;
     }
 
-    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
-
     private MainViewModel? VM => DataContext as MainViewModel;
 
     // ── Window lifecycle ──────────────────────────────────────────────────────

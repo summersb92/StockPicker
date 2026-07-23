@@ -21,7 +21,5 @@ public partial class GlossaryWindow : Window
         DataContext = new GlossaryViewModel();
     }
 
-    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
-
     private void Close_Click(object? sender, RoutedEventArgs e) => Close();
 }

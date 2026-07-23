@@ -74,11 +74,6 @@ public partial class PositionEditWindow : Window
         Loaded += (_, _) => { if (_isEdit) EntryPriceBox.Focus(); else SymbolBox.Focus(); };
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private static DateTimeOffset ToOffset(DateTime dt) =>
         new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), TimeSpan.Zero);
 

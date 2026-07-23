@@ -56,11 +56,6 @@ public partial class SellPositionWindow : Window
         Loaded += (_, _) => { PriceBox.Focus(); PriceBox.SelectAll(); };
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private void PriceBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateProceeds();
 
     private void UpdateProceeds()

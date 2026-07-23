@@ -31,11 +31,6 @@ public partial class EditCashWindow : Window
         Loaded += (_, _) => { CashBox.Focus(); CashBox.SelectAll(); };
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private void Set_Click(object? sender, RoutedEventArgs e)
     {
         if (!decimal.TryParse(CashBox.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out var value) || value < 0)

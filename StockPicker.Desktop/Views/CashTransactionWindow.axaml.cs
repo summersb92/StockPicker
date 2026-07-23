@@ -52,11 +52,6 @@ public partial class CashTransactionWindow : Window
         Loaded += (_, _) => AmountBox.Focus();
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private void Ok_Click(object? sender, RoutedEventArgs e)
     {
         if (!decimal.TryParse(AmountBox.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out var amount) || amount <= 0)
