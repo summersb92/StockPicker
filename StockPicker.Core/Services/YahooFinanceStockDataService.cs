@@ -625,6 +625,152 @@ namespace StockPicker.Services
             catch { return (null, null); }
         }
 
+        // ── Analyst ratings (quoteSummary v10) ─────────────────────────────────
+
+        // Per-symbol cache. Yahoo serves this data with maxAge 86400 (daily), so a
+        // 24-hour TTL for hits; failures are cached briefly so a bad symbol doesn't
+        // re-fetch on every selection change. Static: one cache for the app lifetime,
+        // matching the shared HttpClient above.
+        private static readonly TimeSpan _analystTtl        = TimeSpan.FromHours(24);
+        private static readonly TimeSpan _analystFailureTtl = TimeSpan.FromMinutes(15);
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+            string, (DateTime FetchedAtUtc, AnalystRatings? Data)> _analystCache =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Fetches analyst consensus data (rating counts, recommendation mean, price
+        /// targets) for one symbol from Yahoo's quoteSummary endpoint. On-demand only —
+        /// this endpoint accepts a single symbol per request, so it is called for the
+        /// selected symbol, never a whole universe. Returns null on any HTTP or parse
+        /// failure; an analyst-data failure must never break anything else.
+        /// </summary>
+        public async Task<AnalystRatings?> GetAnalystRatingsAsync(
+            string symbol, System.Threading.CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return null;
+
+            // Cache hit (data within 24h, or a recent failure) — no network.
+            if (_analystCache.TryGetValue(symbol, out var cached))
+            {
+                var ttl = cached.Data != null ? _analystTtl : _analystFailureTtl;
+                if (DateTime.UtcNow - cached.FetchedAtUtc < ttl)
+                    return cached.Data;
+            }
+
+            try
+            {
+                var crumb = await EnsureCrumbAsync();
+                var url = $"https://query2.finance.yahoo.com/v10/finance/quoteSummary/" +
+                          $"{Uri.EscapeDataString(symbol)}" +
+                          "?modules=recommendationTrend,financialData" +
+                          (crumb != null ? $"&crumb={Uri.EscapeDataString(crumb)}" : "");
+
+                using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    _analystCache[symbol] = (DateTime.UtcNow, null);
+                    return null;
+                }
+
+                var json    = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var ratings = ParseAnalystRatings(symbol, json, DateTime.UtcNow);
+                _analystCache[symbol] = (DateTime.UtcNow, ratings);
+                return ratings;
+            }
+            catch (System.OperationCanceledException)
+            {
+                // A superseded selection — don't poison the cache, just report nothing.
+                return null;
+            }
+            catch
+            {
+                _analystCache[symbol] = (DateTime.UtcNow, null);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Parses a quoteSummary JSON payload (recommendationTrend + financialData
+        /// modules) into an <see cref="AnalystRatings"/>. Defensive throughout: missing
+        /// modules or fields become nulls/zeros; returns null when neither module
+        /// yields any usable data or the JSON is malformed. Public and static so it is
+        /// testable offline against canned fixtures.
+        /// </summary>
+        public static AnalystRatings? ParseAnalystRatings(string symbol, string json, DateTime fetchedAtUtc)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+
+                if (!doc.RootElement.TryGetProperty("quoteSummary", out var qs)) return null;
+                if (!qs.TryGetProperty("result", out var resultArr) ||
+                    resultArr.ValueKind != JsonValueKind.Array ||
+                    resultArr.GetArrayLength() == 0)
+                    return null;
+
+                var result  = resultArr[0];
+                var ratings = new AnalystRatings { Symbol = symbol, FetchedAtUtc = fetchedAtUtc };
+                bool any    = false;
+
+                // recommendationTrend.trend[] — use the current-month "0m" bucket.
+                if (result.TryGetProperty("recommendationTrend", out var trendModule) &&
+                    trendModule.ValueKind == JsonValueKind.Object &&
+                    trendModule.TryGetProperty("trend", out var trendArr) &&
+                    trendArr.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var t in trendArr.EnumerateArray())
+                    {
+                        if (GetString(t, "period") != "0m") continue;
+                        ratings.StrongBuy  = (int)(GetLong(t, "strongBuy")  ?? 0);
+                        ratings.Buy        = (int)(GetLong(t, "buy")        ?? 0);
+                        ratings.Hold       = (int)(GetLong(t, "hold")       ?? 0);
+                        ratings.Sell       = (int)(GetLong(t, "sell")       ?? 0);
+                        ratings.StrongSell = (int)(GetLong(t, "strongSell") ?? 0);
+                        any = any || ratings.TotalRatings > 0;
+                        break;
+                    }
+                }
+
+                // financialData — numeric values are wrapped objects with a "raw" field.
+                if (result.TryGetProperty("financialData", out var fin) &&
+                    fin.ValueKind == JsonValueKind.Object)
+                {
+                    ratings.RecommendationMean      = GetRawDouble(fin, "recommendationMean");
+                    ratings.RecommendationKey       = GetString(fin, "recommendationKey") ?? "";
+                    ratings.NumberOfAnalystOpinions = (int?)GetRawLong(fin, "numberOfAnalystOpinions");
+                    ratings.TargetMeanPrice         = GetRawDecimal(fin, "targetMeanPrice");
+                    ratings.TargetMedianPrice       = GetRawDecimal(fin, "targetMedianPrice");
+                    ratings.TargetHighPrice         = GetRawDecimal(fin, "targetHighPrice");
+                    ratings.TargetLowPrice          = GetRawDecimal(fin, "targetLowPrice");
+
+                    any = any
+                          || ratings.RecommendationMean.HasValue
+                          || !string.IsNullOrEmpty(ratings.RecommendationKey)
+                          || ratings.NumberOfAnalystOpinions.HasValue
+                          || ratings.HasTargets;
+                }
+
+                return any ? ratings : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Yahoo wraps quoteSummary numerics as { "raw": 1.94, "fmt": "1.94" }.
+        private static double? GetRawDouble(JsonElement el, string key) =>
+            el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Object
+                ? GetDouble(p, "raw") : null;
+
+        private static decimal? GetRawDecimal(JsonElement el, string key) =>
+            el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Object
+                ? GetDecimal(p, "raw") : null;
+
+        private static long? GetRawLong(JsonElement el, string key) =>
+            el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Object
+                ? GetLong(p, "raw") : null;
+
         // ── Black-Scholes helpers ──────────────────────────────────────────────
 
         /// <summary>Theta of a call option ($/day) using Black-Scholes.</summary>

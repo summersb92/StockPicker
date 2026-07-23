@@ -105,6 +105,10 @@ namespace StockPicker.Core.Tests
             string symbol, ChartRange range = ChartRange.Year, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<WeeklyBar>>(Array.Empty<WeeklyBar>());
 
+        public Task<AnalystRatings?> GetAnalystRatingsAsync(
+            string symbol, CancellationToken ct = default)
+            => Task.FromResult<AnalystRatings?>(null);
+
         public Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(
             string symbol, CancellationToken ct = default)
             => Task.FromResult<(double?, double?)>((null, null));

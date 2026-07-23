@@ -46,5 +46,12 @@ namespace StockPicker.Services
         /// Returns (null, null) if options data is unavailable or not supported.
         /// </summary>
         Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(string symbol, System.Threading.CancellationToken ct = default);
+
+        /// <summary>
+        /// Fetches Wall Street analyst consensus data (rating counts, recommendation
+        /// mean, price targets) for a single symbol. Returns null when the data is
+        /// unavailable or the source does not support it — never throws.
+        /// </summary>
+        Task<AnalystRatings?> GetAnalystRatingsAsync(string symbol, System.Threading.CancellationToken ct = default);
     }
 }

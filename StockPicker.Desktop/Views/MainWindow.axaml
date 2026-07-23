@@ -3,6 +3,7 @@
         xmlns:vm="clr-namespace:StockPicker.Desktop.ViewModels"
         xmlns:conv="clr-namespace:StockPicker.Desktop.Converters"
         xmlns:ctrl="clr-namespace:StockPicker.Desktop.Controls"
+        xmlns:views="clr-namespace:StockPicker.Desktop.Views"
         xmlns:m="clr-namespace:StockPicker.Models;assembly=StockPicker.Core"
         x:Class="StockPicker.Desktop.Views.MainWindow"
         x:DataType="vm:MainViewModel"
@@ -20,6 +21,45 @@
         <conv:InverseBoolConverter        x:Key="InverseBool" />
         <conv:LayoutModeToBoolConverter   x:Key="LayoutModeToBool" />
         <conv:TrendBrushConverter         x:Key="TrendBrush" />
+
+        <!-- Shared "Analyst Ratings" section reused by every detail template. All data
+             comes from the Window-level VM (SelectedAnalystRatings, fetched on-demand for
+             the active selection), so one keyed template serves all four item types.
+             Collapses entirely when no ratings are available; shows a subtle Loading
+             state while the fetch is in flight. Label tooltips are sourced from the
+             canonical Glossary via the GlossaryTip.Key attached property. -->
+        <DataTemplate x:Key="AnalystRatingsSection">
+            <StackPanel x:CompileBindings="False"
+                        IsVisible="{Binding $parent[Window].DataContext.ShowAnalystSection}">
+                <Separator Margin="0,10" />
+                <TextBlock Text="Analyst Ratings" FontWeight="SemiBold" />
+                <TextBlock Text="Loading…" Foreground="#999" FontStyle="Italic" FontSize="10"
+                           Margin="0,4,0,0"
+                           IsVisible="{Binding $parent[Window].DataContext.IsAnalystLoading}" />
+                <StackPanel IsVisible="{Binding $parent[Window].DataContext.HasAnalystRatings}">
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="Consensus:  " Foreground="#666"
+                                   views:GlossaryTip.Key="RecommendationMean" />
+                        <TextBlock Text="{Binding $parent[Window].DataContext.SelectedAnalystRatings.ConsensusDisplay}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="0,2,0,0"
+                               IsVisible="{Binding $parent[Window].DataContext.SelectedAnalystRatings.HasCounts}">
+                        <TextBlock Text="Ratings:  " Foreground="#666"
+                                   views:GlossaryTip.Key="AnalystRatingCounts" />
+                        <TextBlock Text="{Binding $parent[Window].DataContext.SelectedAnalystRatings.CountsDisplay}" />
+                    </WrapPanel>
+                    <WrapPanel Margin="0,2,0,0"
+                               IsVisible="{Binding $parent[Window].DataContext.SelectedAnalystRatings.HasTargets}">
+                        <TextBlock Text="Targets:  " Foreground="#666"
+                                   views:GlossaryTip.Key="AnalystTargetPrice" />
+                        <TextBlock Text="{Binding $parent[Window].DataContext.SelectedAnalystRatings.TargetRangeDisplay}" />
+                    </WrapPanel>
+                    <TextBlock Margin="0,2,0,0" Foreground="#666" FontSize="10"
+                               Text="{Binding $parent[Window].DataContext.SelectedAnalystRatings.TargetUpsideDisplay, StringFormat='Mean target {0}'}"
+                               IsVisible="{Binding $parent[Window].DataContext.SelectedAnalystRatings.TargetUpsideDisplay, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                </StackPanel>
+            </StackPanel>
+        </DataTemplate>
 
         <!-- Shared "Ask AI" footer reused by the per-type detail templates (keyed,
              referenced via {StaticResource AskAIFooter}). -->
@@ -103,6 +143,9 @@
                         <TextBlock Text="{Binding $parent[Window].DataContext.DetailsThetaDisplay,
                                              StringFormat='Theta: {0}  '}" />
                     </WrapPanel>
+
+                    <!-- Analyst ratings (on-demand, shared template) -->
+                    <ContentControl ContentTemplate="{StaticResource AnalystRatingsSection}" Content="{Binding}" />
 
                     <!-- Technical indicators -->
                     <Separator Margin="0,10" />
@@ -189,6 +232,9 @@
                         <TextBlock Text="{Binding DayChangePctDisplay,  StringFormat='Change: {0}  ',    FallbackValue=''}" />
                     </WrapPanel>
 
+                    <!-- Analyst ratings (on-demand, shared template) -->
+                    <ContentControl ContentTemplate="{StaticResource AnalystRatingsSection}" Content="{Binding}" />
+
                     <Separator Margin="0,10" />
                     <TextBlock Text="Intraday Signals" FontWeight="SemiBold" />
                     <WrapPanel Margin="0,4,0,0">
@@ -238,6 +284,9 @@
                         <TextBlock Text="{Binding DayChangePctDisplay, StringFormat='Change: {0}  ',    FallbackValue=''}" />
                         <TextBlock Text="{Binding ImpliedVolatility,   StringFormat='IV: {0:P1}  ',     FallbackValue=''}" />
                     </WrapPanel>
+
+                    <!-- Analyst ratings (on-demand, shared template) -->
+                    <ContentControl ContentTemplate="{StaticResource AnalystRatingsSection}" Content="{Binding}" />
 
                     <Separator Margin="0,10" />
                     <TextBlock Text="Signals" FontWeight="SemiBold" />
@@ -294,6 +343,9 @@
                         <TextBlock Text="{Binding EffectiveGainDisplay,  StringFormat='Gain: {0}  '}" />
                         <TextBlock Text="{Binding EffectiveGainPctDisplay, StringFormat='({0})  '}" />
                     </WrapPanel>
+
+                    <!-- Analyst ratings (on-demand, shared template) -->
+                    <ContentControl ContentTemplate="{StaticResource AnalystRatingsSection}" Content="{Binding}" />
 
                     <!-- Margin breakdown — only when the position was bought on margin -->
                     <StackPanel IsVisible="{Binding HasMargin}">
@@ -529,7 +581,7 @@
                         <!-- Filter bar -->
                         <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="6,5">
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
                                 <!-- MIGRATION NOTE: WPF used an overlay TextBlock + DataTrigger to show
                                      a placeholder when SearchText is empty. Avalonia TextBox has a native
                                      Watermark, used here instead. -->
@@ -537,15 +589,25 @@
                                          Text="{Binding SearchText}"
                                          Watermark="🔎  Search symbol or company…"
                                          Margin="0,0,8,0" FontSize="12" />
-                                <TextBlock Grid.Column="1" Text="{Binding RecommendationsCountDisplay}"
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding ActionFilterOptions}"
+                                          SelectedItem="{Binding SelectedActionFilter}"
+                                          MinWidth="110" FontSize="12" Margin="0,0,8,0"
+                                          ToolTip.Tip="Show only recommendations with this action" />
+                                <ComboBox Grid.Column="2"
+                                          ItemsSource="{Binding SectorFilterOptions}"
+                                          SelectedItem="{Binding SelectedSectorFilter}"
+                                          MinWidth="130" FontSize="12" Margin="0,0,8,0"
+                                          ToolTip.Tip="Show only stocks in this sector" />
+                                <TextBlock Grid.Column="3" Text="{Binding RecommendationsCountDisplay}"
                                            VerticalAlignment="Center" Foreground="#777" FontSize="11"
                                            Margin="0,0,8,0" />
-                                <Button Grid.Column="2" Content="✕ Clear"
+                                <Button Grid.Column="4" Content="✕ Clear"
                                         Command="{Binding ClearFiltersCommand}"
                                         Padding="8,4" Margin="0,0,8,0"
-                                        ToolTip.Tip="Clear the search box and Buy-Only filter"
+                                        ToolTip.Tip="Clear the search box, dropdown filters, and Buy-Only toggle"
                                         IsVisible="{Binding IsFilterActive}" />
-                                <ToggleButton Grid.Column="3"
+                                <ToggleButton Grid.Column="5"
                                               Content="Buy Only"
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="10,4"
@@ -736,6 +798,36 @@
                             </DockPanel>
                         </Border>
 
+                        <!-- Filter bar (mirrors the Recommendations one) -->
+                        <Border DockPanel.Dock="Top"
+                                Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
+                                BorderThickness="0,0,0,1" Padding="6,5">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding DayPickSearchText}"
+                                         Watermark="🔎  Search symbol or company…"
+                                         Margin="0,0,8,0" FontSize="12" />
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding DirectionFilterOptions}"
+                                          SelectedItem="{Binding SelectedDirectionFilter}"
+                                          MinWidth="80" FontSize="12" Margin="0,0,8,0"
+                                          ToolTip.Tip="Show only Long or Short picks" />
+                                <ComboBox Grid.Column="2"
+                                          ItemsSource="{Binding DayPickSectorFilterOptions}"
+                                          SelectedItem="{Binding SelectedDayPickSectorFilter}"
+                                          MinWidth="130" FontSize="12" Margin="0,0,8,0"
+                                          ToolTip.Tip="Show only picks in this sector" />
+                                <TextBlock Grid.Column="3" Text="{Binding DayPicksCountDisplay}"
+                                           VerticalAlignment="Center" Foreground="#777" FontSize="11"
+                                           Margin="0,0,8,0" />
+                                <Button Grid.Column="4" Content="✕ Clear"
+                                        Command="{Binding ClearDayPickFiltersCommand}"
+                                        Padding="8,4"
+                                        ToolTip.Tip="Clear the Daily Picks search box and dropdown filters"
+                                        IsVisible="{Binding IsDayPickFilterActive}" />
+                            </Grid>
+                        </Border>
+
                         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
                             <Button Content="Add to Watch"
                                     Command="{Binding AddDayPickToWatchCommand}"
@@ -761,8 +853,9 @@
                                    Text="⚠ These are algorithmic signals only — not financial advice. Day trading carries significant risk. Always use your own judgment."
                                    FontSize="10" Foreground="#999" Margin="6,4" TextWrapping="Wrap" />
 
+                        <Grid>
                         <DataGrid x:Name="DayPicksGridFull"
-                                  ItemsSource="{Binding DayPicks}"
+                                  ItemsSource="{Binding DayPicksView}"
                                   SelectedItem="{Binding SelectedDayPick}"
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
@@ -797,6 +890,14 @@
                                 <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}" Width="*" MinWidth="260" />
                             </DataGrid.Columns>
                         </DataGrid>
+
+                        <!-- Empty-state when the active filter hides every pick -->
+                        <TextBlock Text="No picks match your filters."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#999" FontStyle="Italic" FontSize="13"
+                                   IsHitTestVisible="False"
+                                   IsVisible="{Binding HasNoDayPickFilterMatches}" />
+                        </Grid>
                     </DockPanel>
                 </TabItem>
 
@@ -1246,20 +1347,25 @@
                         </StackPanel>
                         <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
                                 BorderThickness="0,0,0,1" Padding="4,4">
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
                                 <TextBox Grid.Column="0"
                                          Text="{Binding SearchText}"
                                          Watermark="Search symbol or company…"
                                          Margin="0,0,6,0" FontSize="11" />
-                                <TextBlock Grid.Column="1" Text="{Binding RecommendationsCountDisplay}"
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding ActionFilterOptions}"
+                                          SelectedItem="{Binding SelectedActionFilter}"
+                                          MinWidth="92" FontSize="11" Margin="0,0,6,0"
+                                          ToolTip.Tip="Show only recommendations with this action" />
+                                <TextBlock Grid.Column="2" Text="{Binding RecommendationsCountDisplay}"
                                            VerticalAlignment="Center" Foreground="#777" FontSize="10"
                                            Margin="0,0,6,0" />
-                                <Button Grid.Column="2" Content="✕"
+                                <Button Grid.Column="3" Content="✕"
                                         Command="{Binding ClearFiltersCommand}"
                                         Padding="6,3" FontSize="11" Margin="0,0,6,0"
-                                        ToolTip.Tip="Clear the search box and Buy-Only filter"
+                                        ToolTip.Tip="Clear the search box, dropdown filters, and Buy-Only toggle"
                                         IsVisible="{Binding IsFilterActive}" />
-                                <ToggleButton Grid.Column="3" Content="Buy Only"
+                                <ToggleButton Grid.Column="4" Content="Buy Only"
                                               IsChecked="{Binding BuyOnlyFilter}"
                                               Padding="6,3" FontSize="11"
                                               ToolTip.Tip="Show only Buy-rated recommendations" />
@@ -1314,6 +1420,34 @@
                                            VerticalAlignment="Center" Foreground="#555" FontStyle="Italic" FontSize="10" />
                             </DockPanel>
                         </Border>
+                        <!-- Filter bar (compact: search + direction + sector) -->
+                        <Border DockPanel.Dock="Top" Background="{StaticResource App.SurfaceAltBrush}" BorderBrush="{StaticResource App.BorderBrush}"
+                                BorderThickness="0,0,0,1" Padding="4,4">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding DayPickSearchText}"
+                                         Watermark="Search symbol or company…"
+                                         Margin="0,0,6,0" FontSize="11" />
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding DirectionFilterOptions}"
+                                          SelectedItem="{Binding SelectedDirectionFilter}"
+                                          MinWidth="64" FontSize="11" Margin="0,0,6,0"
+                                          ToolTip.Tip="Show only Long or Short picks" />
+                                <ComboBox Grid.Column="2"
+                                          ItemsSource="{Binding DayPickSectorFilterOptions}"
+                                          SelectedItem="{Binding SelectedDayPickSectorFilter}"
+                                          MinWidth="100" FontSize="11" Margin="0,0,6,0"
+                                          ToolTip.Tip="Show only picks in this sector" />
+                                <TextBlock Grid.Column="3" Text="{Binding DayPicksCountDisplay}"
+                                           VerticalAlignment="Center" Foreground="#777" FontSize="10"
+                                           Margin="0,0,6,0" />
+                                <Button Grid.Column="4" Content="✕"
+                                        Command="{Binding ClearDayPickFiltersCommand}"
+                                        Padding="6,3" FontSize="11"
+                                        ToolTip.Tip="Clear the Daily Picks search box and dropdown filters"
+                                        IsVisible="{Binding IsDayPickFilterActive}" />
+                            </Grid>
+                        </Border>
                         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4">
                             <Button Content="Watch"
                                     Command="{Binding AddDayPickToWatchCommand}"
@@ -1332,8 +1466,9 @@
                                     Padding="6,4"
                                     ToolTip.Tip="Batch AI analysis of all current picks" />
                         </StackPanel>
+                        <Grid>
                         <DataGrid x:Name="DayPicksGridCompact"
-                                  ItemsSource="{Binding DayPicks}"
+                                  ItemsSource="{Binding DayPicksView}"
                                   SelectedItem="{Binding SelectedDayPick}"
                                   SelectionMode="Extended"
                                   AutoGenerateColumns="False" IsReadOnly="True"
@@ -1350,6 +1485,14 @@
                                 <DataGridTextColumn Header="Signals" Binding="{Binding TriggerReason}"      Width="*" MinWidth="220" />
                             </DataGrid.Columns>
                         </DataGrid>
+
+                        <!-- Empty-state when the active filter hides every pick -->
+                        <TextBlock Text="No picks match your filters."
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#999" FontStyle="Italic" FontSize="12"
+                                   IsHitTestVisible="False"
+                                   IsVisible="{Binding HasNoDayPickFilterMatches}" />
+                        </Grid>
                     </DockPanel>
                 </TabItem>
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Avalonia;
 using Avalonia.Controls;
 using StockPicker.Reference;
 
@@ -56,5 +57,29 @@ internal static class GlossaryTooltips
     {
         if (Glossary.TryGet(key, out var def) && def is not null)
             ToolTip.SetTip(control, def.Tooltip);
+    }
+}
+
+/// <summary>
+/// XAML-attachable bridge to <see cref="GlossaryTooltips.Apply(Control, string)"/> for
+/// labels declared inside DataTemplates (which code-behind can't reach directly):
+/// <c>views:GlossaryTip.Key="RecommendationMean"</c> sets the control's tooltip from the
+/// canonical Glossary entry. Unknown keys are a silent no-op, matching Apply.
+/// </summary>
+public class GlossaryTip : AvaloniaObject
+{
+    public static readonly AttachedProperty<string?> KeyProperty =
+        AvaloniaProperty.RegisterAttached<GlossaryTip, Control, string?>("Key");
+
+    public static void SetKey(Control control, string? value) => control.SetValue(KeyProperty, value);
+    public static string? GetKey(Control control) => control.GetValue(KeyProperty);
+
+    static GlossaryTip()
+    {
+        KeyProperty.Changed.AddClassHandler<Control>((control, args) =>
+        {
+            if (args.NewValue is string key && !string.IsNullOrWhiteSpace(key))
+                GlossaryTooltips.Apply(control, key);
+        });
     }
 }

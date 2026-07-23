@@ -159,7 +159,14 @@ namespace StockPicker.Desktop.ViewModels
 
             AddToWatchCommand              = new RelayCommand(_ => AddSelectedToWatch(),    _ => SelectedRecommendation != null);
             AddToHeldCommand               = new RelayCommand(_ => AddSelectedToHeld(),    _ => SelectedRecommendation != null);
-            ClearFiltersCommand            = new RelayCommand(_ => { SearchText = ""; BuyOnlyFilter = false; }, _ => IsFilterActive);
+            ClearFiltersCommand            = new RelayCommand(_ =>
+            {
+                SearchText           = "";
+                BuyOnlyFilter        = false;
+                SelectedActionFilter = AllActionsOption;
+                SelectedSectorFilter = AllSectorsOption;
+            }, _ => IsFilterActive);
+            ClearDayPickFiltersCommand     = new RelayCommand(_ => ClearDayPickFilters(), _ => IsDayPickFilterActive);
             RemoveFromWatchCommand         = new RelayCommand(_ => RemoveSelectedWatch(),  _ => SelectedWatch           != null);
             RemoveFromHeldCommand          = new RelayCommand(_ => RemoveSelectedHeld(),   _ => SelectedHeld            != null);
             PromoteWatchToPositionCommand  = new RelayCommand(_ => PromoteWatchToPosition(), _ => SelectedWatch         != null);
@@ -272,6 +279,11 @@ namespace StockPicker.Desktop.ViewModels
             RecommendationsView.Filter = RecommendationFilter;
             RecommendationsView.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Recommendation.Confidence),      System.ComponentModel.ListSortDirection.Descending));
             RecommendationsView.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Recommendation.ActionSortOrder), System.ComponentModel.ListSortDirection.Ascending));
+
+            // Filtered view for the Daily Picks grids — same pattern as RecommendationsView.
+            // No default sort descriptions: the pick service already emits rows in rank order.
+            DayPicksView = new DataGridCollectionView(DayPicks);
+            DayPicksView.Filter = DayPickFilter;
 
             ApplySavedColumnVisibility();
             foreach (var col in AllColumns)
@@ -771,6 +783,7 @@ namespace StockPicker.Desktop.ViewModels
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
+                    _ = LoadAnalystRatingsAsync(value?.Symbol);
                 }
             }
         }
@@ -788,6 +801,7 @@ namespace StockPicker.Desktop.ViewModels
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
+                    _ = LoadAnalystRatingsAsync(value?.Symbol);
                 }
             }
         }
@@ -805,6 +819,7 @@ namespace StockPicker.Desktop.ViewModels
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
+                    _ = LoadAnalystRatingsAsync(value?.Symbol);
                 }
             }
         }
@@ -822,6 +837,7 @@ namespace StockPicker.Desktop.ViewModels
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
+                    _ = LoadAnalystRatingsAsync(value?.Symbol);
                 }
             }
         }
@@ -838,6 +854,7 @@ namespace StockPicker.Desktop.ViewModels
                     if (value != null) ActiveSelection = value;
                     _ = LoadChartAsync(value?.Symbol);
                     _ = LoadOptionsAsync(value?.Symbol);
+                    _ = LoadAnalystRatingsAsync(value?.Symbol);
                 }
             }
         }
@@ -900,6 +917,95 @@ namespace StockPicker.Desktop.ViewModels
 
         public string DetailsIVDisplay    => _detailsIV.HasValue    ? $"{_detailsIV.Value * 100.0:F1}%"  : "—";
         public string DetailsThetaDisplay => _detailsTheta.HasValue ? $"{_detailsTheta.Value:F4}/day"    : "—";
+
+        // ── Analyst ratings (Details pane) ────────────────────────────────────
+
+        private AnalystRatings? _selectedAnalystRatings;
+        /// <summary>
+        /// Analyst consensus data for the selected symbol, fetched on demand (service
+        /// caches per symbol for 24h). Null when unavailable — the Details section
+        /// collapses rather than showing an error.
+        /// </summary>
+        public AnalystRatings? SelectedAnalystRatings
+        {
+            get => _selectedAnalystRatings;
+            private set
+            {
+                if (SetProperty(ref _selectedAnalystRatings, value))
+                {
+                    OnPropertyChanged(nameof(HasAnalystRatings));
+                    OnPropertyChanged(nameof(ShowAnalystSection));
+                }
+            }
+        }
+
+        private bool _isAnalystLoading;
+        /// <summary>True while the analyst-ratings fetch for the selection is in flight.</summary>
+        public bool IsAnalystLoading
+        {
+            get => _isAnalystLoading;
+            private set
+            {
+                if (SetProperty(ref _isAnalystLoading, value))
+                    OnPropertyChanged(nameof(ShowAnalystSection));
+            }
+        }
+
+        /// <summary>True when there are ratings to show for the selection.</summary>
+        public bool HasAnalystRatings => _selectedAnalystRatings != null;
+
+        /// <summary>Section visibility: shown while loading or when data arrived.</summary>
+        public bool ShowAnalystSection => _isAnalystLoading || _selectedAnalystRatings != null;
+
+        // Supersedes stale fetches: only the most recent selection's result lands.
+        private System.Threading.CancellationTokenSource? _analystCts;
+
+        /// <summary>
+        /// Fetches analyst consensus data for the selected symbol and populates
+        /// <see cref="SelectedAnalystRatings"/>. Cancels/supersedes any in-flight
+        /// fetch; a cache hit inside the service costs no network round-trip.
+        /// Errors leave the property null — no status-bar spam.
+        /// </summary>
+        private async Task LoadAnalystRatingsAsync(string? symbol = null)
+        {
+            symbol ??= ActiveSelectedSymbol();
+
+            _analystCts?.Cancel();
+            _analystCts?.Dispose();
+            var cts = _analystCts = new System.Threading.CancellationTokenSource();
+
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                SelectedAnalystRatings = null;
+                IsAnalystLoading = false;
+                return;
+            }
+
+            SelectedAnalystRatings = null;
+            IsAnalystLoading = true;
+            try
+            {
+                var ratings = await _dataService.GetAnalystRatingsAsync(symbol, cts.Token);
+                if (cts.IsCancellationRequested) return; // superseded by a newer selection
+
+                // Inject the latest cached price so target displays can show upside.
+                if (ratings != null && _cachedSummaries != null &&
+                    _cachedSummaries.TryGetValue(symbol, out var qs))
+                    ratings.CurrentPrice = qs.Price;
+
+                SelectedAnalystRatings = ratings;
+            }
+            catch
+            {
+                if (!cts.IsCancellationRequested)
+                    SelectedAnalystRatings = null;
+            }
+            finally
+            {
+                if (!cts.IsCancellationRequested)
+                    IsAnalystLoading = false;
+            }
+        }
 
         private bool _isChartLoading;
         public bool IsChartLoading
@@ -1085,11 +1191,59 @@ namespace StockPicker.Desktop.ViewModels
 
             if (_buyOnlyFilter && rec.Action != RecommendationAction.Buy && rec.Action != RecommendationAction.StrongBuy) return false;
 
+            // Action dropdown (composes with Buy-Only rather than replacing it).
+            if (ActionFromFilterOption(_selectedActionFilter) is RecommendationAction wanted &&
+                rec.Action != wanted)
+                return false;
+
+            // Sector dropdown ("All Sectors" passes everything).
+            if (!string.IsNullOrEmpty(_selectedSectorFilter) &&
+                _selectedSectorFilter != AllSectorsOption &&
+                !string.Equals(rec.Sector, _selectedSectorFilter, StringComparison.OrdinalIgnoreCase))
+                return false;
+
             var q = _searchText?.Trim();
             if (!string.IsNullOrEmpty(q))
             {
                 if (!rec.Symbol.Contains(q, StringComparison.OrdinalIgnoreCase) &&
                     !(rec.CompanyName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Maps an Action-filter option string back to its enum value; null = no filter.</summary>
+        private static RecommendationAction? ActionFromFilterOption(string option) => option switch
+        {
+            "Strong Buy"  => RecommendationAction.StrongBuy,
+            "Buy"         => RecommendationAction.Buy,
+            "Hold"        => RecommendationAction.Hold,
+            "Sell"        => RecommendationAction.Sell,
+            "Strong Sell" => RecommendationAction.StrongSell,
+            _             => null,   // "All Actions" or unknown
+        };
+
+        /// <summary>Day-pick row filter for <see cref="DayPicksView"/>.</summary>
+        private bool DayPickFilter(object obj)
+        {
+            if (obj is not DayPick pick) return false;
+
+            // Direction dropdown ("All" passes everything).
+            if (_selectedDirectionFilter == "Long"  && pick.Direction != DayPickDirection.Long)  return false;
+            if (_selectedDirectionFilter == "Short" && pick.Direction != DayPickDirection.Short) return false;
+
+            // Sector dropdown.
+            if (!string.IsNullOrEmpty(_selectedDayPickSectorFilter) &&
+                _selectedDayPickSectorFilter != AllSectorsOption &&
+                !string.Equals(pick.Sector, _selectedDayPickSectorFilter, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var q = _dayPickSearchText?.Trim();
+            if (!string.IsNullOrEmpty(q))
+            {
+                if (!pick.Symbol.Contains(q, StringComparison.OrdinalIgnoreCase) &&
+                    !(pick.CompanyName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
                     return false;
             }
 
@@ -1143,8 +1297,215 @@ namespace StockPicker.Desktop.ViewModels
             }
         }
 
-        /// <summary>True when the search box or Buy-Only toggle is narrowing the list.</summary>
-        public bool IsFilterActive => !string.IsNullOrWhiteSpace(_searchText) || _buyOnlyFilter;
+        // ── Recommendations: Action + Sector dropdown filters ────────────────
+
+        /// <summary>Sentinel first entry for both sector dropdowns.</summary>
+        private const string AllSectorsOption = "All Sectors";
+
+        /// <summary>Sentinel first entry for the Action dropdown.</summary>
+        private const string AllActionsOption = "All Actions";
+
+        /// <summary>Sentinel first entry for the Daily Picks Direction dropdown.</summary>
+        private const string AllDirectionsOption = "All";
+
+        /// <summary>Options for the Recommendations Action dropdown.</summary>
+        public static IReadOnlyList<string> ActionFilterOptions { get; } =
+            new[] { AllActionsOption, "Strong Buy", "Buy", "Hold", "Sell", "Strong Sell" };
+
+        private string _selectedActionFilter = AllActionsOption;
+        public string SelectedActionFilter
+        {
+            get => _selectedActionFilter;
+            set
+            {
+                if (SetProperty(ref _selectedActionFilter, value ?? AllActionsOption))
+                {
+                    RecommendationsView?.Refresh();
+                    RefreshFilterStatus();
+                }
+            }
+        }
+
+        /// <summary>
+        /// "All Sectors" + the distinct sectors present in the current recommendations.
+        /// Rebuilt whenever the Recommendations collection repopulates.
+        /// </summary>
+        public ObservableCollection<string> SectorFilterOptions { get; } =
+            new() { AllSectorsOption };
+
+        private string _selectedSectorFilter = AllSectorsOption;
+        public string SelectedSectorFilter
+        {
+            get => _selectedSectorFilter;
+            set
+            {
+                if (SetProperty(ref _selectedSectorFilter, value ?? AllSectorsOption))
+                {
+                    RecommendationsView?.Refresh();
+                    RefreshFilterStatus();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds a sector dropdown's options from the rows now in the grid, keeping
+        /// the current choice when that sector still exists (else back to "All Sectors").
+        /// </summary>
+        private static void RebuildSectorOptions(
+            ObservableCollection<string> options, IEnumerable<string> sectors, ref string selected)
+        {
+            var distinct = sectors
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            options.Clear();
+            options.Add(AllSectorsOption);
+            foreach (var s in distinct) options.Add(s);
+
+            if (!options.Contains(selected))
+                selected = AllSectorsOption;
+        }
+
+        /// <summary>Refreshes the Recommendations sector dropdown after a repopulate.</summary>
+        private void RefreshSectorFilterOptions()
+        {
+            var previous = _selectedSectorFilter;
+            RebuildSectorOptions(SectorFilterOptions,
+                Recommendations.Select(r => r.Sector), ref _selectedSectorFilter);
+            if (!string.Equals(previous, _selectedSectorFilter, StringComparison.Ordinal))
+            {
+                // Selection was reset (its sector vanished) — notify and re-filter,
+                // since the field changed without going through the setter.
+                OnPropertyChanged(nameof(SelectedSectorFilter));
+                RecommendationsView?.Refresh();
+                RefreshFilterStatus();
+            }
+        }
+
+        // ── Daily Picks: view + filters ───────────────────────────────────────
+
+        /// <summary>
+        /// Filtered view over <see cref="DayPicks"/> — same pattern as
+        /// <see cref="RecommendationsView"/>. Both Daily Picks grids bind here; rows
+        /// remain <see cref="DayPick"/> items so multi-select command parameters and
+        /// LoadingRow tint handlers are unaffected.
+        /// </summary>
+        public DataGridCollectionView DayPicksView { get; private set; } = null!;
+
+        private string _dayPickSearchText = "";
+        public string DayPickSearchText
+        {
+            get => _dayPickSearchText;
+            set
+            {
+                if (SetProperty(ref _dayPickSearchText, value))
+                {
+                    DayPicksView?.Refresh();
+                    RefreshDayPickFilterStatus();
+                }
+            }
+        }
+
+        /// <summary>Options for the Daily Picks Direction dropdown.</summary>
+        public static IReadOnlyList<string> DirectionFilterOptions { get; } =
+            new[] { AllDirectionsOption, "Long", "Short" };
+
+        private string _selectedDirectionFilter = AllDirectionsOption;
+        public string SelectedDirectionFilter
+        {
+            get => _selectedDirectionFilter;
+            set
+            {
+                if (SetProperty(ref _selectedDirectionFilter, value ?? AllDirectionsOption))
+                {
+                    DayPicksView?.Refresh();
+                    RefreshDayPickFilterStatus();
+                }
+            }
+        }
+
+        /// <summary>"All Sectors" + distinct sectors present in the current picks.</summary>
+        public ObservableCollection<string> DayPickSectorFilterOptions { get; } =
+            new() { AllSectorsOption };
+
+        private string _selectedDayPickSectorFilter = AllSectorsOption;
+        public string SelectedDayPickSectorFilter
+        {
+            get => _selectedDayPickSectorFilter;
+            set
+            {
+                if (SetProperty(ref _selectedDayPickSectorFilter, value ?? AllSectorsOption))
+                {
+                    DayPicksView?.Refresh();
+                    RefreshDayPickFilterStatus();
+                }
+            }
+        }
+
+        /// <summary>Refreshes the Daily Picks sector dropdown after a repopulate.</summary>
+        private void RefreshDayPickSectorFilterOptions()
+        {
+            var previous = _selectedDayPickSectorFilter;
+            RebuildSectorOptions(DayPickSectorFilterOptions,
+                DayPicks.Select(p => p.Sector), ref _selectedDayPickSectorFilter);
+            if (!string.Equals(previous, _selectedDayPickSectorFilter, StringComparison.Ordinal))
+            {
+                OnPropertyChanged(nameof(SelectedDayPickSectorFilter));
+                DayPicksView?.Refresh();
+                RefreshDayPickFilterStatus();
+            }
+        }
+
+        /// <summary>True when any Daily Picks filter is narrowing the list.</summary>
+        public bool IsDayPickFilterActive =>
+            !string.IsNullOrWhiteSpace(_dayPickSearchText)
+            || _selectedDirectionFilter    != AllDirectionsOption
+            || _selectedDayPickSectorFilter != AllSectorsOption;
+
+        /// <summary>Count of picks currently passing the filter.</summary>
+        private int DayPickFilteredCount =>
+            DayPicksView is null ? DayPicks.Count : DayPicksView.Cast<object>().Count();
+
+        /// <summary>"12 picks" when unfiltered, "Showing 4 of 12" when filtered.</summary>
+        public string DayPicksCountDisplay
+        {
+            get
+            {
+                int total = DayPicks.Count;
+                if (total == 0) return "";
+                int shown = DayPickFilteredCount;
+                return shown == total ? $"{total} picks" : $"Showing {shown} of {total}";
+            }
+        }
+
+        /// <summary>True when there are picks but the active filter hides them all.</summary>
+        public bool HasNoDayPickFilterMatches => DayPicks.Count > 0 && DayPickFilteredCount == 0;
+
+        /// <summary>Re-evaluates Daily Picks filter-derived display properties.</summary>
+        private void RefreshDayPickFilterStatus()
+        {
+            OnPropertyChanged(nameof(IsDayPickFilterActive));
+            OnPropertyChanged(nameof(DayPicksCountDisplay));
+            OnPropertyChanged(nameof(HasNoDayPickFilterMatches));
+            ((RelayCommand)ClearDayPickFiltersCommand).RaiseCanExecuteChanged();
+        }
+
+        /// <summary>Resets every Daily Picks filter (search, direction, sector).</summary>
+        private void ClearDayPickFilters()
+        {
+            DayPickSearchText           = "";
+            SelectedDirectionFilter     = AllDirectionsOption;
+            SelectedDayPickSectorFilter = AllSectorsOption;
+        }
+
+        /// <summary>True when the search box, Buy-Only toggle, or a dropdown is narrowing the list.</summary>
+        public bool IsFilterActive =>
+            !string.IsNullOrWhiteSpace(_searchText)
+            || _buyOnlyFilter
+            || _selectedActionFilter != AllActionsOption
+            || _selectedSectorFilter != AllSectorsOption;
 
         /// <summary>Count of rows currently passing the filter (post-refresh view count).</summary>
         private int FilteredCount =>
@@ -1285,6 +1646,7 @@ namespace StockPicker.Desktop.ViewModels
         public ICommand AddToWatchCommand        { get; }
         public ICommand AddToHeldCommand         { get; }
         public ICommand ClearFiltersCommand      { get; }
+        public ICommand ClearDayPickFiltersCommand { get; }
         public ICommand RemoveFromWatchCommand   { get; }
         public ICommand RemoveFromHeldCommand    { get; }
         public ICommand RefreshDayPicksCommand      { get; }
@@ -2034,6 +2396,7 @@ namespace StockPicker.Desktop.ViewModels
 
             // Flash-free grid update
             Recommendations.ReplaceAll(recs);
+            RefreshSectorFilterOptions();
             RefreshFilterStatus();
             // WPF-ADAPTATION: AskAINewsCommand.CanExecute reads Recommendations.Count > 0.
             // ReplaceAll fires a Reset (not per-item Add), and WPF auto-requeried on it;
@@ -2084,6 +2447,8 @@ namespace StockPicker.Desktop.ViewModels
                 if (cached != null)
                 {
                     DayPicks.ReplaceAll(cached);
+                    RefreshDayPickSectorFilterOptions();
+                    RefreshDayPickFilterStatus();
                     DayPicksStatus = $"{cached.Count} picks for {dayLabel}  (cached)";
                     return;
                 }
@@ -2116,6 +2481,8 @@ namespace StockPicker.Desktop.ViewModels
                 _portfolioService.SaveDayPicksCache(targetDay, picks);
 
                 DayPicks.ReplaceAll(picks);
+                RefreshDayPickSectorFilterOptions();
+                RefreshDayPickFilterStatus();
                 ((RelayCommand)AskAIAboutPicksCommand).RaiseCanExecuteChanged();
                 DayPicksStatus = picks.Count > 0
                     ? $"{picks.Count} picks for {dayLabel}  [{_selectedDayPickStrategy}]"
@@ -2645,6 +3012,7 @@ namespace StockPicker.Desktop.ViewModels
             ActiveSelection = selection;
             _ = LoadChartAsync(symbol);
             _ = LoadOptionsAsync(symbol);
+            _ = LoadAnalystRatingsAsync(symbol);
             StatusMessage = $"{symbol.ToUpperInvariant()} selected from the News briefing.";
         }
 

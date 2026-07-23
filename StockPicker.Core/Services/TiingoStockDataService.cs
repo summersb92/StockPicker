@@ -284,5 +284,9 @@ namespace StockPicker.Services
         public Task<(double? IV, double? Theta)> GetNearTermOptionsAsync(string symbol, System.Threading.CancellationToken ct = default)
             => Task.FromResult<(double? IV, double? Theta)>((null, null));
 
+        /// <inheritdoc />
+        public Task<AnalystRatings?> GetAnalystRatingsAsync(string symbol, System.Threading.CancellationToken ct = default)
+            => Task.FromResult<AnalystRatings?>(null);
+
     }
 }

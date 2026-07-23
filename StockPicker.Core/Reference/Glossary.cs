@@ -99,6 +99,21 @@ namespace StockPicker.Reference
                 "Count of historical analogs behind the target stats.",
                 "The number of historical analog setups used to estimate the target-hit probability and timing stats; larger samples are more reliable."),
 
+            // ── Analyst consensus (Yahoo quoteSummary) ──────────────────────────
+            new("RecommendationMean", "Analyst consensus mean", TermCategory.Signal,
+                "1–5 analyst consensus; lower is stronger.",
+                "The average of Wall Street analyst recommendations on a 1–5 scale, where 1 is Strong Buy and 5 is Strong Sell; lower values indicate a stronger consensus rating.",
+                Range: "1–5"),
+            new("AnalystCount", "Analyst count", TermCategory.Signal,
+                "Number of analysts contributing to the consensus.",
+                "The number of professional analysts whose recommendations and price targets are aggregated into the consensus figures."),
+            new("AnalystRatingCounts", "Analyst rating counts", TermCategory.Signal,
+                "How many analysts rate the stock Strong Buy / Buy / Hold / Sell / Strong Sell.",
+                "The breakdown of current analyst recommendations by category — how many analysts rate the stock Strong Buy (SB), Buy (B), Hold (H), Sell (S), and Strong Sell (SS) this month."),
+            new("AnalystTargetPrice", "Analyst price target", TermCategory.Signal,
+                "Analysts' low / mean / high 12-month price projections.",
+                "The range of analyst 12-month price projections for the stock: the lowest, average (mean), and highest published targets. These are third-party estimates, not predictions by this app."),
+
             // ── Technical indicators ────────────────────────────────────────────
             new("Score", "Analysis score", TermCategory.Indicator,
                 "Composite bullish/bearish score from the analysis.",
