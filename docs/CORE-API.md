@@ -1,7 +1,7 @@
 # StockPicker.Core — API Guide
 
 A practical guide for LLMs, scripts, and external tools that consume `StockPicker.Core.dll`
-directly (without the WPF app or the CLI).
+directly (without the desktop app or the CLI).
 
 ---
 
@@ -9,8 +9,8 @@ directly (without the WPF app or the CLI).
 
 `StockPicker.Core` is a **UI-free .NET 8 class library**. It contains all of the app's
 models, data services, indicator math, the scan/analysis/recommendation engine, the
-portfolio ledger, and the LLM news-briefing builder. It deliberately has **no WPF or
-Windows-only dependency**, so it runs on Windows, Linux, and macOS.
+portfolio ledger, and the LLM news-briefing builder. It deliberately has **no UI-framework
+or Windows-only dependency**, so it runs on Windows, Linux, and macOS.
 
 Build output:
 
@@ -113,7 +113,7 @@ public static class BuiltInUniverses
 
 ### ScanEngine (`Services/ScanEngine.cs`)
 
-WPF-free orchestration of the scan pipeline (**fetch → analyze → recommend**), shared by
+UI-free orchestration of the scan pipeline (**fetch → analyze → recommend**), shared by
 the desktop app and the CLI.
 
 ```csharp
@@ -343,7 +343,7 @@ public class ContextBundle
 ```
 
 **Projection happens at the call site, not in the exporter.** Callers run
-`ContextProjections.Project*` when they assemble the bundle — the WPF app on the UI
+`ContextProjections.Project*` when they assemble the bundle — the desktop app on the UI
 thread (its exports are debounced ~500 ms and written off-thread), the CLI at
 bundle-build time inside `RunContext`. This is deliberate:
 

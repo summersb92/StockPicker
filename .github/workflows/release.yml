@@ -1,8 +1,9 @@
 name: Release
 
-# Publishes a GitHub Release with self-contained win-x64 builds of the desktop app
-# and the CLI. Fires automatically when a v* tag is pushed, and can also be run
-# manually from the Actions tab against an existing tag.
+# Publishes a GitHub Release with self-contained builds of the desktop app
+# (win-x64 AND linux-x64 — it's Avalonia, so one codebase ships both) and the
+# CLI (win-x64). Fires automatically when a v* tag is pushed, and can also be
+# run manually from the Actions tab against an existing tag.
 #
 # Auth: uses the built-in GITHUB_TOKEN (permissions.contents: write) — no PAT,
 # no `gh auth login`, no secrets required for the default (unsigned) build.
@@ -41,7 +42,10 @@ jobs:
           Write-Host "Building $tag"
 
       - name: Publish desktop (self-contained, single-file, win-x64)
-        run: dotnet publish StockPicker/StockPicker.csproj -c Release -r win-x64 -o publish/desktop
+        run: dotnet publish StockPicker.Desktop/StockPicker.Desktop.csproj -c Release -r win-x64 -o publish/desktop-win
+
+      - name: Publish desktop (self-contained, single-file, linux-x64)
+        run: dotnet publish StockPicker.Desktop/StockPicker.Desktop.csproj -c Release -r linux-x64 -o publish/desktop-linux
 
       - name: Publish CLI (self-contained, single-file, win-x64)
         run: >
@@ -54,6 +58,8 @@ jobs:
       # Disabled by default so the workflow succeeds with no certificate.
       # To enable: set repo variable SIGNING_ENABLED = true and add the secrets /
       # variables referenced below. See docs/SIGNING.md for full setup.
+      # Windows-only by design: the exe filter skips the Linux binary
+      # (Authenticode doesn't apply to ELF executables).
       - name: Sign executables
         if: ${{ vars.SIGNING_ENABLED == 'true' }}
         uses: azure/trusted-signing-action@v0.5.9   # verify latest at github.com/Azure/trusted-signing-action
@@ -73,8 +79,9 @@ jobs:
         run: |
           $v = '${{ steps.ver.outputs.version }}'
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive publish/desktop/StockPicker.exe "dist/StockPicker-Desktop-v$v-win-x64.zip" -Force
-          Compress-Archive publish/cli/stockpicker.exe      "dist/StockPicker-CLI-v$v-win-x64.zip"      -Force
+          Compress-Archive publish/desktop-win/StockPicker.exe "dist/StockPicker-Desktop-v$v-win-x64.zip"   -Force
+          Compress-Archive publish/desktop-linux/StockPicker   "dist/StockPicker-Desktop-v$v-linux-x64.zip" -Force
+          Compress-Archive publish/cli/stockpicker.exe         "dist/StockPicker-CLI-v$v-win-x64.zip"       -Force
           Get-FileHash dist/*.zip -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash, [IO.Path]::GetFileName($_.Path) } |
             Out-File dist/SHA256SUMS.txt -Encoding ascii
@@ -86,8 +93,9 @@ jobs:
           name: StockPicker ${{ steps.ver.outputs.tag }}
           generate_release_notes: true
           body: |
-            Self-contained **Windows x64** builds — no .NET install required.
-            Unzip and run the `.exe`. See `CHANGELOG.md` for the full change list.
+            Self-contained **Windows x64** and **Linux x64** builds — no .NET install required.
+            Windows: unzip and run the `.exe`. Linux: unzip, `chmod +x StockPicker`, run.
+            See `CHANGELOG.md` for the full change list.
 
             > ⚠️ Not investment advice. Algorithmic heuristics for research/education only.
           files: |

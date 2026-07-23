@@ -22,7 +22,7 @@ $RepoRoot      = $PSScriptRoot
 $Solution      = Join-Path $RepoRoot 'StockPicker.sln'
 $CliProject    = Join-Path $RepoRoot 'StockPicker.Cli\StockPicker.Cli.csproj'
 $CliDll        = Join-Path $RepoRoot 'StockPicker.Cli\bin\Release\net8.0\stockpicker.dll'
-$DesktopExe    = Join-Path $RepoRoot 'StockPicker\bin\Release\net8.0-windows\win-x64\StockPicker.exe'
+$DesktopExe    = Join-Path $RepoRoot 'StockPicker.Desktop\bin\Release\net8.0\StockPicker.exe'
 $DotnetDownload = 'https://dotnet.microsoft.com/en-us/download/dotnet/8.0'
 
 # ── Plain-English output helpers ───────────────────────────────────────────

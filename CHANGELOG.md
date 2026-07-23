@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Desktop app migrated from WPF to Avalonia UI (cross-platform cutover).** The WPF
+  `StockPicker` project is retired (history preserves it) and the Avalonia
+  `StockPicker.Desktop` project is now *the* desktop app, shipping as `StockPicker(.exe)`
+  for **Windows and Linux** as self-contained single-file builds
+  (`dotnet publish -c Release -r win-x64|linux-x64`). All features, both layouts
+  (Full/Compact), the theme, the chart, the interactive News briefing, and column/sort
+  persistence were ported 1:1; macOS is untested but expected to work via Avalonia.
+  The release workflow now attaches both platform artifacts on `v*` tags, and
+  `setup.cmd`/`setup.ps1` point at the new project.
+
 ### Added
 
 - **Modern UI theme.** Hand-rolled flat theme (`Themes/ModernTheme.xaml`, zero new

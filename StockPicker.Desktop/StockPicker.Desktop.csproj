@@ -6,11 +6,35 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>StockPicker.Desktop</RootNamespace>
-    <AssemblyName>StockPicker.Desktop</AssemblyName>
+    <!-- Ships as StockPicker(.exe) — the folder/project keep the .Desktop name -->
+    <AssemblyName>StockPicker</AssemblyName>
     <LangVersion>latest</LangVersion>
     <Version>1.1.0</Version>
     <!-- Avalonia recommends this to speed up XAML compile & catch binding errors -->
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+
+    <!-- ── Single-file self-contained publish ──────────────────────────
+         Run: dotnet publish -c Release -r win-x64     (Windows)
+              dotnet publish -c Release -r linux-x64   (Linux)
+         Output: bin\Release\net8.0\<rid>\publish\StockPicker(.exe)
+         The binary includes the .NET runtime — no install required on target PC.
+         The RID comes from -r at publish time; do not hard-code one here or
+         plain `dotnet build` becomes RID-specific.
+    ──────────────────────────────────────────────────────────────────── -->
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <!-- Applied only during `dotnet publish` (the SDK sets _IsPublishing) so a
+       plain `dotnet build` stays a fast framework-dependent build. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+    <!-- No trimming: Avalonia + reflection-heavy bindings are not trim-safe. -->
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>

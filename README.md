@@ -6,8 +6,12 @@ held positions with trailing performance.
 
 It ships as **two front-ends over one shared engine**:
 
-- **StockPicker** — a WPF desktop app (Windows, .NET 8).
+- **StockPicker** — a cross-platform desktop app built with [Avalonia UI](https://avaloniaui.net) (.NET 8).
 - **stockpicker** — a cross-platform CLI (Windows / Linux / macOS, .NET 8).
+
+**Platforms:** the desktop app runs on **Windows** and **Linux** (both published as
+self-contained single-file builds). macOS is untested but should work via Avalonia —
+build from source with `dotnet run --project StockPicker.Desktop`.
 
 > ⚠️ **Not investment advice.** All signals are algorithmic heuristics for research and
 > educational use. Day-trading, earnings, and margin features are especially risky.
@@ -18,14 +22,16 @@ It ships as **two front-ends over one shared engine**:
 
 ```
 StockPicker.sln
-├── StockPicker.Core/   ← all logic: models, data services, analysis/recommendation
-│                          engine, day-picks, earnings, news briefing, performance.
-│                          WPF-free, net8.0 — the single source of truth.
-├── StockPicker/        ← WPF desktop app (net8.0-windows). References Core.
-└── StockPicker.Cli/    ← cross-platform CLI (net8.0). References Core.
+├── StockPicker.Core/       ← all logic: models, data services, analysis/recommendation
+│                              engine, day-picks, earnings, news briefing, performance.
+│                              UI-free, net8.0 — the single source of truth.
+├── StockPicker.Desktop/    ← Avalonia desktop app (net8.0, Windows + Linux).
+│                              References Core. Ships as StockPicker(.exe).
+├── StockPicker.Cli/        ← cross-platform CLI (net8.0). References Core.
+└── StockPicker.Core.Tests/ ← Core unit tests (net8.0).
 ```
 
-Dependency direction: `StockPicker` → `StockPicker.Core` ← `StockPicker.Cli`.
+Dependency direction: `StockPicker.Desktop` → `StockPicker.Core` ← `StockPicker.Cli`.
 Both front-ends consume the same models and services, so a fix in Core lands everywhere.
 
 ---
@@ -168,7 +174,7 @@ stockpicker daypicks --strategy breakout --limit 100
 
 ## Getting started
 
-**Prerequisites:** .NET 8 SDK; Visual Studio 2022 (17.8+) for the WPF app.
+**Prerequisites:** .NET 8 SDK (any editor; Visual Studio 2022 17.8+ or Rider work well).
 
 ```bash
 # Build everything
@@ -178,14 +184,19 @@ dotnet build StockPicker.sln -c Release
 dotnet run --project StockPicker.Cli -- scan --strategy momentum --index dow30 --top 10
 
 # Run the desktop app
-dotnet run --project StockPicker          # or open StockPicker.sln and press F5
+dotnet run --project StockPicker.Desktop  # or open StockPicker.sln and press F5
 ```
 
 **Single-file desktop publish** (self-contained, no .NET install on the target PC):
 
 ```bash
-dotnet publish StockPicker/StockPicker.csproj -c Release -r win-x64
-# → StockPicker/bin/Release/net8.0-windows/win-x64/publish/StockPicker.exe
+# Windows
+dotnet publish StockPicker.Desktop/StockPicker.Desktop.csproj -c Release -r win-x64
+# → StockPicker.Desktop/bin/Release/net8.0/win-x64/publish/StockPicker.exe
+
+# Linux
+dotnet publish StockPicker.Desktop/StockPicker.Desktop.csproj -c Release -r linux-x64
+# → StockPicker.Desktop/bin/Release/net8.0/linux-x64/publish/StockPicker  (chmod +x if copied)
 ```
 
 In the desktop app: pick a strategy, set a target %, click **Scan**, then use
@@ -362,5 +373,5 @@ output.
 
 ### Direct Core consumption
 
-Tools that want richer access than the file bundle can reference the WPF-free
+Tools that want richer access than the file bundle can reference the UI-free
 `StockPicker.Core` DLL directly — see `docs/CORE-API.md` for the Core API surface.

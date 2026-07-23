@@ -8,9 +8,10 @@
         <FluentTheme />
         <!-- DataGrid ships its own theme dictionary that must be merged in. -->
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
-        <!-- Modern flat theme (port of StockPicker/Themes/ModernTheme.xaml).
-             Included after Fluent + DataGrid so its selectors layer on top. -->
-        <StyleInclude Source="avares://StockPicker.Desktop/Themes/ModernTheme.axaml" />
+        <!-- Modern flat theme (port of the retired WPF ModernTheme.xaml).
+             Included after Fluent + DataGrid so its selectors layer on top.
+             NB: avares:// URIs use the ASSEMBLY name (StockPicker), not the project name. -->
+        <StyleInclude Source="avares://StockPicker/Themes/ModernTheme.axaml" />
     </Application.Styles>
 
 </Application>
