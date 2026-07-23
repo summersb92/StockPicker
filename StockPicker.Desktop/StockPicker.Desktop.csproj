@@ -9,7 +9,7 @@
     <!-- Ships as StockPicker(.exe) — the folder/project keep the .Desktop name -->
     <AssemblyName>StockPicker</AssemblyName>
     <LangVersion>latest</LangVersion>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <!-- Avalonia recommends this to speed up XAML compile & catch binding errors -->
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 

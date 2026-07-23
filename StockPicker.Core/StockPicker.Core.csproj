@@ -14,7 +14,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- The codebase has partial XML docs; suppress missing-doc noise. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Description>StockPicker core engine — scanning, analysis, recommendations, portfolio ledger, and LLM context export. UI-free .NET 8 library.</Description>
     <Authors>Bsummers</Authors>
   </PropertyGroup>
