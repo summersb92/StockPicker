@@ -35,6 +35,11 @@ produce runnable single-file outputs (launch smoke-test the win-x64 one).
 
 **Verify:** CI green on both OSes; meaningful assertions, not coverage theater.
 
+> **Follow-up noted during D2:** `AnalysisService`'s `WeekReturn%` is computed over the
+> entire fetched history window, not the trailing 5 trading days its doc comment claims.
+> Tests assert direction only and don't lock in either interpretation — decide the intended
+> semantic and fix code or comment (small, standalone task; affects the displayed metric).
+
 ## Phase 3 — Track B: Port polish
 
 | # | Task | Notes |

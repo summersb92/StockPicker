@@ -20,14 +20,12 @@ namespace StockPicker.Services
     public class PortfolioService : IPortfolioService
     {
         // ── File paths ────────────────────────────────────────────────────────
+        // Instance fields so tests can point a service at an isolated folder via the
+        // constructor seam below; the default remains %LOCALAPPDATA%\StockPicker.
 
-        private static readonly string _folder =
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "StockPicker");
+        private readonly string _folder;
 
-        private static readonly string _file =
-            Path.Combine(_folder, "portfolio.json");
+        private readonly string _file;
 
         // ── JSON options ──────────────────────────────────────────────────────
         // Enums as strings make the saved file human-readable and survive
@@ -52,8 +50,18 @@ namespace StockPicker.Services
 
         // ── Construction ─────────────────────────────────────────────────────
 
-        public PortfolioService()
+        /// <summary>
+        /// Creates the service over its store folder. Pass null (the default) for the
+        /// production location, <c>%LOCALAPPDATA%\StockPicker</c>; tests pass an
+        /// isolated temp folder so they never touch the user's real portfolio.
+        /// </summary>
+        public PortfolioService(string? storeFolder = null)
         {
+            _folder = storeFolder ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "StockPicker");
+            _file = Path.Combine(_folder, "portfolio.json");
+
             var data         = LoadFromDisk();
             _watch           = data.WatchList;
             _held            = data.Held;

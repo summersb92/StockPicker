@@ -19,8 +19,8 @@ namespace StockPicker.Models
     /// <summary>
     /// One immutable entry in the portfolio ledger. Buys/sells carry share + price detail;
     /// deposits/withdrawals are pure cash moves. <see cref="CashDelta"/> is the signed effect
-    /// on the cash balance (sell/deposit positive, withdrawal negative, buy zero — buying a
-    /// position is recorded for history but does not auto-debit the tracked cash balance).
+    /// on the cash balance (sell/deposit positive, withdrawal negative, buy negative — a buy
+    /// debits the equity outlay: full cost for cash buys, the down-payment for margin buys).
     /// </summary>
     public class Transaction
     {
