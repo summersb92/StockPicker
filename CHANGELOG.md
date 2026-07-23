@@ -72,6 +72,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same whitelist DTOs as the context bundle. Market data is memoized in-memory per
   index for 15 minutes. Registration steps for Claude Code / Claude Desktop are in the
   README (**Register with Claude**).
+- **Self-describing context bundle + canonical glossary.** A new canonical glossary in
+  Core (`StockPicker.Core/Reference/Glossary.cs`, `TermDefinition.cs`) defines every
+  export field, indicator, and strategy in educational (never prescriptive) terms, with
+  `TryGet`/`All`/`ByCategory` lookups. `ContextExportService` now also writes
+  `glossary.json` and `app-state.json`, and each `manifest.json` file entry carries a
+  per-field data dictionary (field → definition) so the bundle explains itself to an LLM
+  without guesswork. The `app-state.json` snapshot ("what's going on right now") records
+  the active strategy, universe, selected symbol, active view, sort, and last-scan
+  freshness, populated by `MainViewModel.ScheduleContextExport`. A reflection-driven
+  drift test (new `StockPicker.Core.Tests` project) fails the build if any
+  `ContextProjections` export field lacks a glossary entry.
+- **Three new read-only MCP tools.** `get_glossary` (the full glossary as JSON),
+  `explain_term` (one definition by term/key, listing valid keys on a miss), and
+  `get_app_state` (the `app-state.json` snapshot) join the existing tools. All remain
+  read-only; no mutating tools are exposed.
 - **StockPicker.Core as a documented, consumable library.** The WPF-free Core project
   now generates an XML documentation file, carries NuGet package metadata
   (version 1.0.0, `dotnet pack` works out of the box), and ships an API guide at

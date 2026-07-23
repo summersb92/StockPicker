@@ -2396,6 +2396,23 @@ namespace StockPicker.ViewModels
                 UniverseDescription  = SelectedIndexDescription,
                 StrategyName         = SelectedStrategy?.Name ?? string.Empty,
                 GeneratedAt          = DateTime.Now,
+
+                // ── App-state snapshot ("what's going on right now") ──────────
+                ActiveStrategy       = SelectedStrategy?.Id ?? string.Empty,
+                ActiveStrategyName   = SelectedStrategy?.Name ?? string.Empty,
+                Universe             = SelectedIndexDescription,
+                SelectedSymbol       = ActiveSelectedSymbol(),
+                // The VM has no explicit active-tab property; Recommendations is the
+                // primary grid, so it is reported as the active view.
+                ActiveView           = "Recommendations",
+                Sort                 = new SortState(
+                                           SavedSortColumn,
+                                           string.Equals(SavedSortDirection, "Descending",
+                                               StringComparison.OrdinalIgnoreCase)),
+                LastScanUtc          = LastFetchTime?.ToUniversalTime(),
+                StalenessHours       = LastFetchTime.HasValue
+                                           ? Math.Round((DateTime.Now - LastFetchTime.Value).TotalHours, 1)
+                                           : null,
             };
 
             // Cancel the previously scheduled export (if any), dispose the spent

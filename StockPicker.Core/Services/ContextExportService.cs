@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using StockPicker.Models;
+using StockPicker.Reference;
 
 namespace StockPicker.Services
 {
@@ -23,6 +25,8 @@ namespace StockPicker.Services
     ///   portfolio.json        — cash balance + whitelisted positions and ledger.
     ///   performance.json      — the whitelisted PerformanceExport (skipped when null).
     ///   news-briefing.md      — the markdown News briefing verbatim (skipped when empty).
+    ///   glossary.json         — canonical definitions for every field/indicator/strategy.
+    ///   app-state.json        — the user's current focus (strategy, universe, selection, sort, freshness).
     ///
     /// Every file is written with the same atomic tmp→rename pattern as
     /// <see cref="PortfolioService"/> so a crash mid-write never leaves a corrupt file.
@@ -68,7 +72,15 @@ namespace StockPicker.Services
 
         // ── Manifest shapes ───────────────────────────────────────────────────
 
-        private sealed record ManifestFile(string Name, string Description, int? Records);
+        // Fields is a per-file data dictionary (json field name → one-line meaning),
+        // sourced from Glossary, so an LLM reading e.g. portfolio.json knows what each
+        // field means without guessing. Null for files with no glossary-backed fields
+        // (e.g. the markdown briefing). WhenWritingNull keeps it out of the JSON then.
+        private sealed record ManifestFile(
+            string                      Name,
+            string                      Description,
+            int?                        Records,
+            Dictionary<string, string>? Fields = null);
 
         private sealed record Manifest(
             int                SchemaVersion,
@@ -79,6 +91,18 @@ namespace StockPicker.Services
             string             Universe,
             string             Strategy,
             List<ManifestFile> Files);
+
+        // Shape written to app-state.json (see LLM-CONTEXT doc §3.3). Kept separate from
+        // ContextBundle so the on-disk schema is explicit and stable.
+        private sealed record AppState(
+            string     ActiveStrategy,
+            string     ActiveStrategyName,
+            string     Universe,
+            string?    SelectedSymbol,
+            string     ActiveView,
+            SortState? Sort,
+            DateTime?  LastScanUtc,
+            double?    StalenessHours);
 
         // ── Public API ────────────────────────────────────────────────────────
 
@@ -134,7 +158,8 @@ namespace StockPicker.Services
                     "recommendations.json",
                     $"Strategy recommendations from the last scan (strategy: {bundle.StrategyName}); " +
                     "each row has the signal (action, confidence, reasoning), key indicators, and trade dates.",
-                    recs.Count));
+                    recs.Count,
+                    FieldDictionary(typeof(RecommendationExport))));
 
             // earnings.json
             var earnings = bundle.Earnings;
@@ -142,7 +167,8 @@ namespace StockPicker.Services
                 files.Add(new ManifestFile(
                     "earnings.json",
                     "Upcoming-earnings candidates ranked by a 0–100 likelihood score, with expected move and momentum.",
-                    earnings.Count));
+                    earnings.Count,
+                    FieldDictionary(typeof(EarningsExport))));
 
             // day-picks.json
             var dayPicks = bundle.DayPicks;
@@ -150,7 +176,8 @@ namespace StockPicker.Services
                 files.Add(new ManifestFile(
                     "day-picks.json",
                     "Intraday (same-session) picks with direction, entry/stop/target levels, and risk-reward ratio.",
-                    dayPicks.Count));
+                    dayPicks.Count,
+                    FieldDictionary(typeof(DayPickExport))));
 
             // portfolio.json
             var positions    = bundle.Positions;
@@ -166,7 +193,9 @@ namespace StockPicker.Services
                     "portfolio.json",
                     $"Portfolio snapshot: cash balance, {positions.Count} open positions (with margin detail " +
                     $"and unrealized P&L), and the full ledger of {transactions.Count} transactions.",
-                    positions.Count + transactions.Count));
+                    positions.Count + transactions.Count,
+                    // Merge the position and transaction field dictionaries — portfolio.json carries both.
+                    FieldDictionary(typeof(PositionExport), typeof(TransactionExport))));
 
             // performance.json (skip when the caller has no computed performance)
             if (bundle.Performance is not null)
@@ -176,7 +205,8 @@ namespace StockPicker.Services
                         "performance.json",
                         "Aggregate holdings performance: cost basis, market value, total gain, and trailing " +
                         "week/month/quarter/year returns.",
-                        1));
+                        1,
+                        FieldDictionary(typeof(PerformanceExport), typeof(PerformancePeriodExport))));
             }
             else
             {
@@ -198,6 +228,35 @@ namespace StockPicker.Services
                 DeleteStale("news-briefing.md");
             }
 
+            // glossary.json — the canonical definitions for every field an LLM will
+            // encounter in the other files (and the source of the per-file data
+            // dictionaries above). Always written so the bundle is self-describing.
+            if (await WriteJsonAsync("glossary.json", Glossary.All, errors))
+                files.Add(new ManifestFile(
+                    "glossary.json",
+                    "Canonical, educational (non-advisory) definitions for every field, indicator, and " +
+                    "strategy used in this bundle; the manifest's per-file `fields` maps are sourced from it.",
+                    Glossary.All.Count));
+
+            // app-state.json — "what's going on right now": the user's active strategy,
+            // universe, selection, view, sort, and scan freshness. Lets an LLM answer
+            // "what am I looking at / why is this highlighted?" beyond just the data.
+            var appState = new AppState(
+                ActiveStrategy:     bundle.ActiveStrategy,
+                ActiveStrategyName: bundle.ActiveStrategyName,
+                Universe:           bundle.Universe,
+                SelectedSymbol:     bundle.SelectedSymbol,
+                ActiveView:         bundle.ActiveView,
+                Sort:               bundle.Sort,
+                LastScanUtc:        bundle.LastScanUtc?.ToUniversalTime(),
+                StalenessHours:     bundle.StalenessHours);
+            if (await WriteJsonAsync("app-state.json", appState, errors))
+                files.Add(new ManifestFile(
+                    "app-state.json",
+                    "Snapshot of the user's current focus: active strategy, scan universe, selected symbol, " +
+                    "active view, grid sort, and how stale the last scan is.",
+                    null));
+
             // manifest.json — written last so it only describes files that really exist.
             var manifest = new Manifest(
                 SchemaVersion:    1,
@@ -215,6 +274,30 @@ namespace StockPicker.Services
 
             if (errors.Count > 0)
                 Report($"⚠ Context export: {errors.Count} file(s) failed — {string.Join("; ", errors)}");
+        }
+
+        /// <summary>
+        /// Builds a data dictionary (json field name → one-line meaning) for the public
+        /// properties of the given export DTO type(s), sourced from <see cref="Glossary"/>.
+        /// Only properties that have a glossary entry are included; the field key is the
+        /// camelCase name that actually appears in the serialized JSON. Returns null when
+        /// no properties are glossary-backed, so the manifest omits an empty map.
+        /// </summary>
+        private static Dictionary<string, string>? FieldDictionary(params Type[] dtoTypes)
+        {
+            var map = new Dictionary<string, string>();
+            foreach (var t in dtoTypes)
+            {
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (Glossary.TryGet(p.Name, out var def) && def is not null)
+                    {
+                        var jsonName = JsonNamingPolicy.CamelCase.ConvertName(p.Name);
+                        map[jsonName] = def.Tooltip;
+                    }
+                }
+            }
+            return map.Count > 0 ? map : null;
         }
 
         /// <summary>

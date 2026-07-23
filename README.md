@@ -251,13 +251,15 @@ exports in one run). Treat a bundle with large `stalenessHours` — or an old
 
 | File                   | Contents                                                             |
 |------------------------|----------------------------------------------------------------------|
-| `manifest.json`        | Entry point: schema version, `generatedAtUtc`, `dataFetchTimeUtc`, `stalenessHours`, enabled data sources, universe, strategy, and the list of files below with descriptions + record counts. |
+| `manifest.json`        | Entry point: schema version, `generatedAtUtc`, `dataFetchTimeUtc`, `stalenessHours`, enabled data sources, universe, strategy, and the list of files below with descriptions + record counts. Each file entry also carries a per-field **data dictionary** (field → one-line definition, sourced from the glossary) so the bundle is self-describing. |
 | `recommendations.json` | Whitelisted strategy recommendations (action, confidence, reasoning, key indicators, trade dates). |
 | `earnings.json`        | Upcoming-earnings candidates with likelihood score, expected move, and momentum. |
 | `day-picks.json`       | Intraday picks with direction, entry/stop/target levels, and risk:reward. |
 | `portfolio.json`       | Cash balance, open positions (incl. margin detail and unrealized P&L), and the full transaction ledger. |
 | `performance.json`     | Aggregate holdings performance: cost basis, market value, total gain, trailing week/month/quarter/year returns (omitted when there is nothing to compute). |
 | `news-briefing.md`     | The markdown News briefing, verbatim (omitted when empty).           |
+| `glossary.json`        | Canonical, educational definitions for every export field, indicator, and strategy (`TermDefinition` entries with tooltip, explanation, formula, and range). |
+| `app-state.json`       | "What's going on right now": active strategy, universe, selected symbol, active view, sort, last-scan time, and staleness (written by the desktop app). |
 
 Files are written atomically (temp file → rename), and the manifest is written **last**,
 so a manifest never references a half-written or missing file.
@@ -297,6 +299,9 @@ server over stdio, exposing the same whitelisted data as live tools:
 | `get_transactions`     | —                                                    | The full ledger, newest first (JSON). |
 | `get_news_briefing`    | `strategy`, `index`                                  | The markdown News briefing. |
 | `get_context_manifest` | —                                                    | `manifest.json` from the context folder (or a note if none exists). |
+| `get_glossary`         | —                                                    | The full canonical glossary (`TermDefinition` entries) as JSON. |
+| `explain_term`         | `term`                                               | One glossary definition by term/key; lists valid keys on a miss. |
+| `get_app_state`        | —                                                    | The `app-state.json` snapshot (or a note if the desktop app hasn't run). |
 
 Market data (universe + 90-day history) is fetched once per index and memoized in-memory
 for **15 minutes**, so consecutive tool calls are fast. stdout carries JSON-RPC frames

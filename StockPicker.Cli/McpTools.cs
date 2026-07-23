@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using StockPicker.Cli;
 using StockPicker.Models;
+using StockPicker.Reference;
 using StockPicker.Services;
 
 // =====================================================================================
@@ -410,6 +411,52 @@ namespace StockPicker.Cli
             }
 
             return File.ReadAllText(manifestPath).TrimEnd();
+        }
+
+        [McpServerTool(Name = "get_glossary",
+            ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false)]
+        [Description("Return the app's canonical glossary as JSON: educational (non-advisory) definitions " +
+                     "for every field, indicator, and strategy that appears in the other tools' output " +
+                     "(e.g. rsi14, confidence, unrealizedGainPct, leverage, likelihoodScore). Each entry has " +
+                     "a key, term, category, tooltip, explanation, and optional formula/range.")]
+        public static string GetGlossary() => ToJson(Glossary.All);
+
+        [McpServerTool(Name = "explain_term",
+            ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false)]
+        [Description("Explain a single glossary term/field by its key (e.g. rsi14, confidence, riskRewardRatio, " +
+                     "momentum). Case-insensitive. Returns one definition as JSON; on an unknown term throws " +
+                     "an error listing the valid keys so the caller can self-correct.")]
+        public static string ExplainTerm(
+            [Description("The glossary key to explain, e.g. rsi14, confidence, leverage, or a strategy id like momentum.")]
+            string term)
+        {
+            if (Glossary.TryGet(term, out var def) && def is not null)
+                return ToJson(def);
+
+            throw new ArgumentException(
+                $"Unknown term '{term}'. Valid keys: {string.Join(", ", Glossary.All.Select(d => d.Key))}.");
+        }
+
+        [McpServerTool(Name = "get_app_state",
+            ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false)]
+        [Description("Read the desktop app's current-focus snapshot (app-state.json): active strategy, scan " +
+                     "universe, selected symbol, active view, grid sort, and scan freshness. Answers " +
+                     "\"what is the user looking at right now?\". Returns a note if the desktop app has not " +
+                     "exported a bundle yet.")]
+        public static string GetAppState()
+        {
+            var appStatePath = Path.Combine(ContextExportService.ContextFolder, "app-state.json");
+            if (!File.Exists(appStatePath))
+            {
+                return ToJson(new
+                {
+                    Note = "No app state exists yet. It is written by the desktop app after a scan " +
+                           "(or by `stockpicker context`).",
+                    ExpectedPath = appStatePath,
+                });
+            }
+
+            return File.ReadAllText(appStatePath).TrimEnd();
         }
     }
 }
