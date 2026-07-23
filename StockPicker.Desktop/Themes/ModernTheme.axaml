@@ -1,0 +1,323 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Modern flat theme — Avalonia port of StockPicker/Themes/ModernTheme.xaml.
+         WPF ResourceDictionary of implicit Styles + Triggers rewritten as Avalonia
+         Styles + selectors/pseudo-classes. Applied app-wide alongside FluentTheme
+         (see App.axaml). Palette: neutral surfaces, blue accent, softened semantics.
+         ══════════════════════════════════════════════════════════════════════ -->
+
+    <Styles.Resources>
+        <ResourceDictionary>
+            <!-- ── Palette (WPF Color/SolidColorBrush map 1:1) ── -->
+            <Color x:Key="App.BackgroundColor">#F4F6F8</Color>
+            <SolidColorBrush x:Key="App.BackgroundBrush"    Color="{StaticResource App.BackgroundColor}" />
+            <SolidColorBrush x:Key="App.SurfaceBrush"       Color="#FFFFFF" />
+            <SolidColorBrush x:Key="App.SurfaceAltBrush"    Color="#F7F9FB" />
+            <SolidColorBrush x:Key="App.AltRowBrush"        Color="#FAFBFD" />
+            <SolidColorBrush x:Key="App.BorderBrush"        Color="#E3E7EC" />
+            <SolidColorBrush x:Key="App.BorderSoftBrush"    Color="#EDF0F4" />
+            <SolidColorBrush x:Key="App.TextBrush"          Color="#1B2430" />
+            <SolidColorBrush x:Key="App.TextSecondaryBrush" Color="#5B6472" />
+            <SolidColorBrush x:Key="App.TextTertiaryBrush"  Color="#8A93A2" />
+            <SolidColorBrush x:Key="App.AccentBrush"        Color="#2563EB" />
+            <SolidColorBrush x:Key="App.AccentDarkBrush"    Color="#1D4FD7" />
+            <SolidColorBrush x:Key="App.AccentSoftBrush"    Color="#E8F0FE" />
+            <SolidColorBrush x:Key="App.HoverBrush"         Color="#F1F5FB" />
+            <SolidColorBrush x:Key="App.PositiveBrush"      Color="#178744" />
+            <SolidColorBrush x:Key="App.NegativeBrush"      Color="#C6314B" />
+            <SolidColorBrush x:Key="App.ButtonHoverBorderBrush" Color="#C8D2DF" />
+
+            <!-- MIGRATION NOTE: TextBox in the WPF theme used a bespoke ControlTemplate
+                 purely to retint the border/background and give an accent focus ring.
+                 Avalonia's Fluent TextBox template requires several named parts
+                 (PART_TextPresenter, PART_ScrollViewer, watermark) whose bindings are
+                 error-prone to hand-roll. The faithful + robust equivalent is to override
+                 the Fluent theme resource brushes so every TextBox picks up our palette
+                 while keeping the working template. Focus/hover states are covered by the
+                 Focused/PointerOver resource variants below (replaces the IsKeyboardFocused
+                 and IsMouseOver triggers). -->
+            <SolidColorBrush x:Key="TextControlBackground"            Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextControlBackgroundFocused"     Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextControlBorderBrush"            Color="#E3E7EC" />
+            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#C8D2DF" />
+            <SolidColorBrush x:Key="TextControlBorderBrushFocused"     Color="#2563EB" />
+            <SolidColorBrush x:Key="TextControlForeground"            Color="#1B2430" />
+            <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#1B2430" />
+            <SolidColorBrush x:Key="TextControlForegroundFocused"     Color="#1B2430" />
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Window
+         ══════════════════════════════════════════════════════════════════════ -->
+    <!-- MIGRATION NOTE: WPF "TextOptions.TextFormattingMode=Display" has no Avalonia
+         equivalent (Avalonia does its own text rendering) and is dropped.
+         "SnapsToDevicePixels" is likewise WPF-only; UseLayoutRounding covers pixel
+         snapping in Avalonia and is applied here at the Window level. -->
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{StaticResource App.BackgroundBrush}" />
+        <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI, Arial" />
+        <Setter Property="UseLayoutRounding" Value="True" />
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Tab headers: flat with an accent underline indicator
+         WPF Style.Triggers (IsMouseOver / IsSelected) → :pointerover / :selected
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="TabItem">
+        <Setter Property="Foreground" Value="{StaticResource App.TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="Root" Background="Transparent"
+                        Padding="13,7,13,0" Margin="0,0,2,0" CornerRadius="4,4,0,0">
+                    <StackPanel>
+                        <ContentPresenter Name="Content"
+                                          Content="{TemplateBinding Header}"
+                                          ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                          HorizontalAlignment="Center" Margin="0,0,0,6"
+                                          RecognizesAccessKey="True" />
+                        <Rectangle Name="Indicator" Height="2.5" RadiusX="1.25" RadiusY="1.25"
+                                   Fill="Transparent" Margin="-2,0" />
+                    </StackPanel>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="TabItem:pointerover /template/ Border#Root">
+        <Setter Property="Background" Value="{StaticResource App.HoverBrush}" />
+    </Style>
+    <Style Selector="TabItem:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+    </Style>
+    <Style Selector="TabItem:selected /template/ Rectangle#Indicator">
+        <Setter Property="Fill" Value="{StaticResource App.AccentBrush}" />
+    </Style>
+    <Style Selector="TabItem:selected">
+        <Setter Property="Foreground" Value="{StaticResource App.AccentDarkBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Buttons: flat card with hover tint
+         WPF Style.Triggers (IsMouseOver / IsPressed / IsEnabled=False)
+             → :pointerover / :pressed / :disabled
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="Button">
+        <Setter Property="Background" Value="{StaticResource App.SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.BorderBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="Root"
+                        Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="4" Padding="{TemplateBinding Padding}">
+                    <ContentPresenter Name="PART_ContentPresenter"
+                                      Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      RecognizesAccessKey="True" />
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="Button:pointerover /template/ Border#Root">
+        <Setter Property="Background" Value="{StaticResource App.HoverBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.ButtonHoverBorderBrush}" />
+    </Style>
+    <Style Selector="Button:pressed /template/ Border#Root">
+        <Setter Property="Background" Value="{StaticResource App.AccentSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.AccentBrush}" />
+    </Style>
+    <Style Selector="Button:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- Accent (primary-action) variant.
+         MIGRATION NOTE: WPF opt-in was Style="{StaticResource AccentButton}". Avalonia's
+         idiomatic equivalent for a control variant is a style class: apply with
+         Classes="accent" (e.g. <Button Classes="accent" .../>). BasedOn is unneeded —
+         the base Button selector above still matches, and these rules layer on top. -->
+    <Style Selector="Button.accent">
+        <Setter Property="Background" Value="{StaticResource App.AccentBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.AccentBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ Border#Root">
+        <Setter Property="Background" Value="{StaticResource App.AccentDarkBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.AccentDarkBrush}" />
+    </Style>
+    <!-- Accent button keeps white foreground on hover/press (base :pressed tint would
+         wash it out); re-assert the accent look for the pressed state. -->
+    <Style Selector="Button.accent:pressed /template/ Border#Root">
+        <Setter Property="Background" Value="{StaticResource App.AccentDarkBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.AccentDarkBrush}" />
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         DataGrid  (Fluent DataGrid theme is merged in App.axaml; these retint it)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="DataGrid">
+        <Setter Property="Background" Value="{StaticResource App.SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.BorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource App.BorderSoftBrush}" />
+        <Setter Property="VerticalGridLinesBrush" Value="{StaticResource App.BorderSoftBrush}" />
+        <Setter Property="GridLinesVisibility" Value="All" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+        <!-- MIGRATION NOTE: WPF RowHeaderWidth="0" → Avalonia hides row headers via
+             HeadersVisibility (default already excludes row headers; set explicitly). -->
+        <Setter Property="HeadersVisibility" Value="Column" />
+    </Style>
+
+    <!-- MIGRATION NOTE: WPF set DataGrid.RowBackground and DataGrid.MinRowHeight directly.
+         Avalonia's DataGrid exposes neither; row background and minimum height are styled
+         on DataGridRow instead. -->
+    <Style Selector="DataGridRow">
+        <Setter Property="Background" Value="{StaticResource App.SurfaceBrush}" />
+        <Setter Property="MinHeight" Value="26" />
+    </Style>
+
+    <Style Selector="DataGridColumnHeader">
+        <Setter Property="Background" Value="{StaticResource App.SurfaceAltBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextSecondaryBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Padding" Value="8,7" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.BorderBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,1,1" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+
+    <!-- MIGRATION NOTE: WPF DataGridCell had a bespoke ControlTemplate whose only job was
+         a bordered, padded ContentPresenter — behaviour the Avalonia Fluent cell template
+         already provides. Rather than re-declare the full template (and risk dropping the
+         selection/validation visuals), the look is reproduced with setters, and the
+         IsSelected trigger → :selected selector. -->
+    <Style Selector="DataGridCell">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="6,3" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="DataGridCell:selected">
+        <Setter Property="Background" Value="{StaticResource App.AccentSoftBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         GroupBox → HeaderedContentControl card look (used by the Details pane)
+         MIGRATION NOTE: Avalonia has no GroupBox control. The faithful equivalent is a
+         HeaderedContentControl styled as a card, applied opt-in with Classes="card":
+             <HeaderedContentControl Classes="card" Header="Details"> ... </HeaderedContentControl>
+         The class keeps the template from hitting every HeaderedContentControl (Expander,
+         etc.). TextElement.* attached setters from WPF are applied directly on the header
+         ContentPresenter (which carries FontSize/FontWeight/Foreground in Avalonia).
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="HeaderedContentControl.card">
+        <Setter Property="Padding" Value="8" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Grid RowDefinitions="Auto,*">
+                    <ContentPresenter Grid.Row="0"
+                                      Content="{TemplateBinding Header}"
+                                      ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                      FontWeight="SemiBold" FontSize="13"
+                                      Foreground="{StaticResource App.TextBrush}"
+                                      Margin="2,0,0,6" />
+                    <Border Grid.Row="1"
+                            Background="{StaticResource App.SurfaceBrush}"
+                            BorderBrush="{StaticResource App.BorderBrush}"
+                            BorderThickness="1" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}" />
+                    </Border>
+                </Grid>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Inputs — TextBox retinted via Fluent resource overrides (see Styles.Resources).
+         Only geometry/spacing needs setters here.
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="TextBox">
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="6,3" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="CheckBox">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+    </Style>
+
+    <Style Selector="ComboBox">
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         ToolTip: card with soft shadow
+         MIGRATION NOTE: WPF HasDropShadow + DropShadowEffect → Avalonia Border BoxShadow
+         (Avalonia has no ToolTip.HasDropShadow property; BoxShadow is the idiomatic drop
+         shadow). ToolTip.Tip is the attached-property usage in views (see EditCashWindow).
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="ToolTip">
+        <Setter Property="Background" Value="{StaticResource App.SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource App.BorderBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource App.TextBrush}" />
+        <Setter Property="Padding" Value="12,9" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="1" CornerRadius="6"
+                        Padding="{TemplateBinding Padding}"
+                        Margin="0,0,8,8"
+                        BoxShadow="0 2 10 0 #2E000000">
+                    <ContentPresenter Content="{TemplateBinding Content}"
+                                      ContentTemplate="{TemplateBinding ContentTemplate}" />
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Slim scrollbars
+         MIGRATION NOTE: WPF replaced the whole ScrollBar template and used an
+         Orientation="Horizontal" trigger to swap width↔height. Avalonia expresses
+         orientation with the :vertical / :horizontal pseudo-classes, and re-templating
+         the whole ScrollBar means reproducing many required parts (PART_Track, line/page
+         buttons). To stay faithful (slim, rounded, neutral thumb) without that risk, we
+         keep the Fluent ScrollBar structure and restyle only the Thumb + size. The WPF
+         SlimThumb keyed style + its IsMouseOver trigger → the Thumb rules below (:pointerover).
+         ══════════════════════════════════════════════════════════════════════ -->
+    <Style Selector="ScrollBar:vertical">
+        <Setter Property="Width" Value="9" />
+    </Style>
+    <Style Selector="ScrollBar:horizontal">
+        <Setter Property="Height" Value="9" />
+    </Style>
+    <Style Selector="ScrollBar Thumb">
+        <Setter Property="Background" Value="#C6CDD6" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Background="{TemplateBinding Background}" CornerRadius="4" Margin="1.5" />
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="ScrollBar Thumb:pointerover">
+        <Setter Property="Background" Value="#A9B2BF" />
+    </Style>
+
+</Styles>

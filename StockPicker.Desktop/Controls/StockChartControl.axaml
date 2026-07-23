@@ -1,0 +1,17 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="StockPicker.Desktop.Controls.StockChartControl"
+             MinHeight="120" MinWidth="200"
+             ClipToBounds="True">
+    <!-- The chart itself is drawn in code-behind by overriding Render(DrawingContext).
+         This Grid only hosts the loading overlay, which sits ON TOP of the drawn chart
+         (Render draws behind the control's content). The Grid is transparent so the
+         drawn chart shows through. -->
+    <Grid Background="Transparent">
+        <TextBlock x:Name="LoadingText"
+                   Text="Loading chart…"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   Foreground="#888" FontStyle="Italic" FontSize="11"
+                   IsVisible="False" />
+    </Grid>
+</UserControl>

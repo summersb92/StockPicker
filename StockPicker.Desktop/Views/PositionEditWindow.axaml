@@ -1,0 +1,106 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="StockPicker.Desktop.Views.PositionEditWindow"
+        Title="Position"
+        Width="420" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <!-- MIGRATION NOTE: WPF keyed FieldLabel style + implicit TextBox/ComboBox/DatePicker
+         styles → window-scoped Avalonia styles (implicit type selectors + a .field class).
+         The per-row IsEnabled that tracked the Margin checkbox uses Avalonia element binding
+         ({Binding #MarginCheck.IsChecked}) instead of WPF ElementName. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.field">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="4,3" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="DatePicker">
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="16">
+        <!-- Buttons -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,8,0,0" Spacing="8">
+            <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Padding="18,6" />
+            <Button Content="Save" Classes="accent" Click="Save_Click" IsDefault="True" Padding="18,6" />
+        </StackPanel>
+
+        <StackPanel>
+            <TextBlock x:Name="ErrorText" Foreground="#C0392B" IsVisible="False"
+                       TextWrapping="Wrap" Margin="0,0,0,8" />
+
+            <Grid ColumnDefinitions="120,*"
+                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Symbol"        Classes="field" />
+                <TextBox   Grid.Row="0" Grid.Column="1" x:Name="SymbolBox"
+                           ToolTip.Tip="Ticker symbol, e.g. AAPL" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Company"       Classes="field" />
+                <TextBox   Grid.Row="1" Grid.Column="1" x:Name="CompanyBox"
+                           ToolTip.Tip="Optional company name" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Entry price"   Classes="field" />
+                <TextBox   Grid.Row="2" Grid.Column="1" x:Name="EntryPriceBox"
+                           ToolTip.Tip="Price you actually paid per share" />
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Shares"        Classes="field" />
+                <TextBox   Grid.Row="3" Grid.Column="1" x:Name="SharesBox"
+                           ToolTip.Tip="Number of shares held" />
+
+                <!-- Margin -->
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Margin"         Classes="field" />
+                <CheckBox  Grid.Row="4" Grid.Column="1" x:Name="MarginCheck"
+                           Content="Bought on margin (borrowed funds)"
+                           VerticalAlignment="Center" Margin="0,0,0,8"
+                           ToolTip.Tip="Tick if this position was purchased with borrowed money." />
+
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="Margin %"       Classes="field"
+                           IsEnabled="{Binding #MarginCheck.IsChecked}" />
+                <TextBox   Grid.Row="5" Grid.Column="1" x:Name="MarginPercentBox"
+                           IsEnabled="{Binding #MarginCheck.IsChecked}"
+                           ToolTip.Tip="Equity you put up, as a % of the position. 50% = 2× leverage." />
+
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="Interest %/yr"  Classes="field"
+                           IsEnabled="{Binding #MarginCheck.IsChecked}" />
+                <TextBox   Grid.Row="6" Grid.Column="1" x:Name="MarginRateBox"
+                           IsEnabled="{Binding #MarginCheck.IsChecked}"
+                           ToolTip.Tip="Annual interest rate charged on the borrowed portion." />
+
+                <TextBlock Grid.Row="7" Grid.Column="0" Text="Entry date"    Classes="field" />
+                <DatePicker Grid.Row="7" Grid.Column="1" x:Name="EntryDatePicker" />
+
+                <TextBlock Grid.Row="8" Grid.Column="0" Text="Planned exit"  Classes="field" />
+                <DatePicker Grid.Row="8" Grid.Column="1" x:Name="PlannedSellPicker"
+                            ToolTip.Tip="Optional planned exit date" />
+
+                <TextBlock Grid.Row="9" Grid.Column="0" Text="Holding"       Classes="field" />
+                <ComboBox  Grid.Row="9" Grid.Column="1" x:Name="HoldingPeriodBox" />
+
+                <TextBlock Grid.Row="10" Grid.Column="0" Text="Source"        Classes="field" />
+                <TextBox   Grid.Row="10" Grid.Column="1" x:Name="SourceBox"
+                           ToolTip.Tip="Where this position came from (defaults to Manual)" />
+
+                <TextBlock Grid.Row="11" Grid.Column="0" Text="Notes"         Classes="field"
+                           VerticalAlignment="Top" Margin="0,3,10,0" />
+                <TextBox   Grid.Row="11" Grid.Column="1" x:Name="NotesBox"
+                           AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56"
+                           VerticalContentAlignment="Top" />
+            </Grid>
+        </StackPanel>
+    </DockPanel>
+</Window>

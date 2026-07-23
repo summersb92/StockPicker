@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:StockPicker.Models;assembly=StockPicker.Core"
+        x:Class="StockPicker.Desktop.Views.TransactionHistoryWindow"
+        Title="Transaction History"
+        Width="760" Height="480"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <DockPanel Margin="12">
+        <!-- Summary strip -->
+        <Border DockPanel.Dock="Top" Background="#F5F7FA" BorderBrush="#DDE3EA"
+                BorderThickness="1" CornerRadius="4" Padding="10,6" Margin="0,0,0,8">
+            <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Foreground="#445566" />
+        </Border>
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Close" IsCancel="True" Click="Close_Click" Padding="18,6" />
+        </StackPanel>
+
+        <!-- MIGRATION NOTE:
+             * WPF DataGrid.RowStyle + DataTriggers (row tint by transaction Type) has no
+               Avalonia equivalent; reproduced via the LoadingRow event in code-behind
+               (fires on realize AND recycle, so the tint survives scroll virtualization).
+             * WPF AlternatingRowBackground has no Avalonia DataGrid property; dropped (rows
+               use the uniform theme background). The Type tint above is the meaningful cue.
+             * WPF SortMemberPath (sort the formatted Date/Cash/Realized columns by their
+               underlying values) has no Avalonia column property; reproduced with
+               CustomSortComparer assigned in code-behind (see the named columns below). -->
+        <DataGrid x:Name="HistoryGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                  x:DataType="models:Transaction"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  CanUserSortColumns="True">
+            <DataGrid.Columns>
+                <!-- Column order matters: code-behind sets CustomSortComparer by index (0/5/6). -->
+                <DataGridTextColumn Header="Date"     Binding="{Binding DateDisplay}"        Width="110" />
+                <DataGridTextColumn Header="Type"     Binding="{Binding TypeDisplay}"        Width="90" />
+                <DataGridTextColumn Header="Symbol"   Binding="{Binding Symbol}"             Width="70" />
+                <DataGridTextColumn Header="Detail"   Binding="{Binding DetailDisplay}"      Width="170" />
+                <DataGridTextColumn Header="Value"    Binding="{Binding GrossDisplay}"       Width="90" />
+                <DataGridTextColumn Header="Cash"     Binding="{Binding CashDeltaDisplay}"   Width="100" />
+                <DataGridTextColumn Header="Realized" Binding="{Binding RealizedGainDisplay}" Width="100" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>

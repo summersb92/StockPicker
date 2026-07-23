@@ -1,0 +1,29 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="StockPicker.Desktop.Views.EditCashWindow"
+        Title="Edit Cash Balance"
+        Width="380" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,12,0,0" Spacing="8">
+            <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Padding="18,6" />
+            <Button Content="Set" Click="Set_Click" IsDefault="True" Padding="18,6" />
+        </StackPanel>
+
+        <StackPanel Spacing="10">
+            <TextBlock TextWrapping="Wrap" Foreground="#555"
+                       Text="Directly set the cash balance for correction or testing. This overrides the number and is NOT recorded as a deposit/withdrawal in the transaction history." />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Cash balance  $" VerticalAlignment="Center" FontWeight="SemiBold" />
+                <TextBox x:Name="CashBox" Width="140" VerticalContentAlignment="Center" Padding="4,3"
+                         ToolTip.Tip="New cash balance" />
+            </StackPanel>
+            <TextBlock x:Name="ErrorText" Foreground="#C0392B" IsVisible="False" TextWrapping="Wrap"
+                       Text="Enter a valid cash balance (a non-negative number)." />
+        </StackPanel>
+    </DockPanel>
+</Window>

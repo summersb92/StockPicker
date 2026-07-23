@@ -1,0 +1,57 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="StockPicker.Desktop.Views.CashTransactionWindow"
+        Title="Cash"
+        Width="380" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <!-- MIGRATION NOTE: WPF keyed FieldLabel + implicit TextBox/DatePicker styles →
+         window-scoped Avalonia styles. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.field">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="4,3" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style Selector="DatePicker">
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,8,0,0" Spacing="8">
+            <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Padding="18,6" />
+            <Button x:Name="OkButton" Content="OK" Classes="accent" Click="Ok_Click" IsDefault="True" Padding="18,6" />
+        </StackPanel>
+
+        <StackPanel>
+            <TextBlock x:Name="ErrorText" Foreground="#C0392B" IsVisible="False"
+                       TextWrapping="Wrap" Margin="0,0,0,8" />
+
+            <Grid ColumnDefinitions="100,*" RowDefinitions="Auto,Auto,Auto,Auto">
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" x:Name="HeaderText"
+                           FontWeight="SemiBold" Foreground="#555555" Margin="0,0,0,10" TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Amount  $" Classes="field" />
+                <TextBox   Grid.Row="1" Grid.Column="1" x:Name="AmountBox"
+                           ToolTip.Tip="Dollar amount" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Date"      Classes="field" />
+                <DatePicker Grid.Row="2" Grid.Column="1" x:Name="DatePickerBox" />
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Note"      Classes="field" />
+                <TextBox   Grid.Row="3" Grid.Column="1" x:Name="NoteBox"
+                           ToolTip.Tip="Optional reason (e.g. paycheck, transfer out)" />
+            </Grid>
+        </StackPanel>
+    </DockPanel>
+</Window>

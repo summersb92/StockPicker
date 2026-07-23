@@ -1,0 +1,231 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:StockPicker.Desktop.Converters"
+        x:Class="StockPicker.Desktop.Views.SettingsWindow"
+        x:CompileBindings="False"
+        Title="Settings"
+        Width="560" Height="480"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <!-- MIGRATION NOTE: DataContext is the shared MainViewModel (set by the caller), which is
+         NOT ported until a later phase. These bindings are therefore deliberately left as
+         reflection bindings: no x:DataType is declared, so Avalonia does not attempt compiled
+         binding against a type it can't see this phase. They resolve at runtime once the VM is
+         wired. Item-template bindings target the copied ColumnToggle / DataSourceToggle VMs. -->
+
+    <Window.Resources>
+        <conv:IndexUniverseConverter x:Key="IndexDisplayConverter" />
+    </Window.Resources>
+
+    <!-- MIGRATION NOTE: WPF keyed TextBlock/ScrollViewer styles (SettingsLabel, SettingsNote,
+         TabContent) cannot be applied via Style="{StaticResource ...}" in Avalonia. They are
+         re-expressed as window-scoped style classes (Classes="label" / "note") and, for the
+         ScrollViewer padding/scrollbar, set directly on each ScrollViewer element. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="TextBlock.note">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#888888" />
+            <Setter Property="FontStyle" Value="Italic" />
+            <Setter Property="Margin" Value="0,2,0,10" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+
+        <!-- Auto-save notice -->
+        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDDDDD"
+                BorderThickness="0,0,0,1" Padding="16,8">
+            <TextBlock Text="All changes are saved automatically."
+                       FontSize="11" Foreground="#888888" FontStyle="Italic" />
+        </Border>
+
+        <!-- Close button -->
+        <Border DockPanel.Dock="Bottom" Padding="16,10" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0">
+            <Button Content="Close" Click="Close_Click"
+                    Padding="24,6" HorizontalAlignment="Right"
+                    IsDefault="True" IsCancel="True" />
+        </Border>
+
+        <!-- Tab pages -->
+        <TabControl Margin="8,8,8,4">
+
+            <!-- Data Sources -->
+            <TabItem Header="Data Sources">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Classes="note"
+                                   Text="Enable or disable data providers and enter API keys." />
+
+                        <ItemsControl ItemsSource="{Binding DataSources}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,8" Padding="10" BorderBrush="#DDDDDD"
+                                            BorderThickness="1" CornerRadius="4">
+                                        <StackPanel>
+                                            <CheckBox IsChecked="{Binding IsEnabled}" FontWeight="SemiBold">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                            </CheckBox>
+                                            <TextBlock Text="{Binding FreeInfo}"
+                                                       FontSize="11" Foreground="#888888" FontStyle="Italic"
+                                                       Margin="20,2,0,4" />
+                                            <StackPanel Orientation="Horizontal" Margin="20,0,0,0"
+                                                        IsVisible="{Binding RequiresApiKey}">
+                                                <TextBlock Text="API Key:" VerticalAlignment="Center"
+                                                           Margin="0,0,6,0" FontSize="12" />
+                                                <TextBox Text="{Binding ApiKey}"
+                                                         Width="340" FontSize="12" VerticalContentAlignment="Center"
+                                                         ToolTip.Tip="{Binding ApiKeyUrl, StringFormat='Get a key at: {0}'}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Classes="note"
+                                   Text="Yahoo Finance and Alpaca require no entry here. Other keyed sources use the API key box above; Alpaca reads ALPACA_API_KEY and ALPACA_API_SECRET from Windows environment variables." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Scanning -->
+            <TabItem Header="Scanning">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Classes="note"
+                                   Text="Configure what the scanner looks at and how often it refreshes." />
+
+                        <Grid ColumnDefinitions="170,*" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Stock index:" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding IndexOptions}"
+                                      SelectedItem="{Binding SelectedIndex}"
+                                      HorizontalAlignment="Stretch"
+                                      ToolTip.Tip="Which index to scan. Dow30/S&amp;P100/NASDAQ100 use built-in lists; S&amp;P 500 is fetched live.">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Converter={StaticResource IndexDisplayConverter}}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Classes="note" Text="{Binding SelectedIndexDescription}" />
+
+                        <Grid ColumnDefinitions="170,*" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Scan limit:" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding UniverseSizeOptions}"
+                                      SelectedItem="{Binding UniverseSize}"
+                                      HorizontalAlignment="Stretch"
+                                      ToolTip.Tip="Maximum stocks to scan from the selected index." />
+                        </Grid>
+                        <TextBlock Classes="note" Text="Takes effect on the next scan / refresh." />
+
+                        <!-- Daily Picks universe cap -->
+                        <TextBlock Text="Daily Picks" FontWeight="SemiBold" Margin="0,12,0,4" />
+                        <Grid ColumnDefinitions="170,*" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Picks universe cap:" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding DayPickUniverseSizeOptions}"
+                                      SelectedItem="{Binding DayPickUniverseSize}"
+                                      HorizontalAlignment="Stretch"
+                                      ToolTip.Tip="Max stocks the Daily Picks engine evaluates. 0 = all stocks from the last scan." />
+                        </Grid>
+                        <TextBlock Classes="note" Text="0 = use all stocks from the last scan. Lower values are faster but may miss setups." />
+
+                        <TextBlock Text="Scan" FontWeight="SemiBold" Margin="0,12,0,4" />
+                        <Grid ColumnDefinitions="170,80,Auto" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Auto-refresh interval:" />
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding RefreshIntervalOptions}"
+                                      SelectedItem="{Binding RefreshIntervalMinutes}"
+                                      HorizontalAlignment="Stretch"
+                                      ToolTip.Tip="How often to re-fetch data during market hours." />
+                            <TextBlock Grid.Column="2" Text=" min" VerticalAlignment="Center" Margin="6,0,0,0" />
+                        </Grid>
+                        <TextBlock Classes="note" Text="Only fires when the market is open (9:30&#x2013;16:00 ET, Mon&#x2013;Fri)." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Analysis -->
+            <TabItem Header="Analysis">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Classes="note"
+                                   Text="Set return targets used to classify Recommendations as Buy / Hold / Avoid." />
+
+                        <Grid ColumnDefinitions="170,Auto" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Target profit / week:" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="&#x25BC;" Width="26" Height="24" Padding="0"
+                                        Command="{Binding DecrementWeeklyCommand}"
+                                        ToolTip.Tip="Decrease by 0.10%" />
+                                <TextBox Width="60" TextAlignment="Center" Height="24" VerticalContentAlignment="Center"
+                                         Text="{Binding TargetProfitMarginPercent, StringFormat=F2}"
+                                         ToolTip.Tip="Minimum weekly return % to classify a pick as a Buy."
+                                         Margin="4,0" />
+                                <Button Content="&#x25B2;" Width="26" Height="24" Padding="0"
+                                        Command="{Binding IncrementWeeklyCommand}"
+                                        ToolTip.Tip="Increase by 0.10%" />
+                                <TextBlock Text=" %" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="170,Auto" Margin="0,0,0,4">
+                            <TextBlock Grid.Column="0" Classes="label" Text="Target profit / month:" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="&#x25BC;" Width="26" Height="24" Padding="0"
+                                        Command="{Binding DecrementMonthlyCommand}"
+                                        ToolTip.Tip="Decrease by 0.10%" />
+                                <TextBox Width="60" TextAlignment="Center" Height="24" VerticalContentAlignment="Center"
+                                         Text="{Binding TargetMonthlyProfitPercent, StringFormat=F2}"
+                                         ToolTip.Tip="Equivalent monthly return % (compound of weekly). Changing this updates the weekly figure."
+                                         Margin="4,0" />
+                                <Button Content="&#x25B2;" Width="26" Height="24" Padding="0"
+                                        Command="{Binding IncrementMonthlyCommand}"
+                                        ToolTip.Tip="Increase by 0.10%" />
+                                <TextBlock Text=" %" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Classes="note"
+                                   Text="Weekly and monthly targets stay in sync via compound interest. Recommendations update instantly." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Columns -->
+            <TabItem Header="Columns">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Classes="note"
+                                   Text="Toggle which columns appear in the Recommendations grid." />
+                        <ItemsControl ItemsSource="{Binding AllColumns}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <CheckBox Content="{Binding Header}"
+                                              IsChecked="{Binding IsVisible}"
+                                              Margin="0,4,20,4" VerticalAlignment="Center"
+                                              MinWidth="100" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+        </TabControl>
+    </DockPanel>
+</Window>

@@ -1,0 +1,16 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="StockPicker.Desktop.App"
+             RequestedThemeVariant="Default">
+    <!-- "Default" theme variant follows the OS setting. -->
+
+    <Application.Styles>
+        <FluentTheme />
+        <!-- DataGrid ships its own theme dictionary that must be merged in. -->
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <!-- Modern flat theme (port of StockPicker/Themes/ModernTheme.xaml).
+             Included after Fluent + DataGrid so its selectors layer on top. -->
+        <StyleInclude Source="avares://StockPicker.Desktop/Themes/ModernTheme.axaml" />
+    </Application.Styles>
+
+</Application>
