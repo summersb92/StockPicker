@@ -35,6 +35,16 @@
             <Setter Property="FontStyle" Value="Italic" />
             <Setter Property="Margin" Value="0,2,0,10" />
         </Style>
+        <!-- Inline API-key test verdict: grey while idle/OK, red when the key doesn't work.
+             Text is empty until the user presses Test, so this is invisible by default. -->
+        <Style Selector="TextBlock.keystatus">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#888888" />
+        </Style>
+        <Style Selector="TextBlock.keystatus.error">
+            <Setter Property="Foreground" Value="#C62828" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
     </Window.Styles>
 
     <DockPanel>
@@ -82,6 +92,14 @@
                                                 <TextBox Text="{Binding ApiKey}"
                                                          Width="340" FontSize="12" VerticalContentAlignment="Center"
                                                          ToolTip.Tip="{Binding ApiKeyUrl, StringFormat='Get a key at: {0}'}" />
+                                                <Button Content="Test"
+                                                        Command="{Binding TestKeyCommand}"
+                                                        Margin="6,0,0,0" Padding="10,3" FontSize="12"
+                                                        ToolTip.Tip="Check that this key still works. Reports only whether it works, not why." />
+                                                <TextBlock Classes="keystatus"
+                                                           Classes.error="{Binding IsKeyInvalid}"
+                                                           Text="{Binding KeyStatusText}"
+                                                           VerticalAlignment="Center" Margin="8,0,0,0" />
                                             </StackPanel>
                                         </StackPanel>
                                     </Border>

@@ -317,6 +317,7 @@ namespace StockPicker.Desktop.ViewModels
                 ds.IsEnabled = _userSettings.EnabledDataSources.Contains(ds.SourceType.ToString());
                 if (_userSettings.ApiKeys.TryGetValue(ds.SourceType.ToString(), out var key))
                     ds.ApiKey = key;
+                ds.KeyValidator = ValidateApiKeyAsync;
                 ds.PropertyChanged += OnDataSourceToggleChanged;
             }
             // Ensure Yahoo is always at least enabled by default on first run
@@ -1814,6 +1815,13 @@ namespace StockPicker.Desktop.ViewModels
         /// </summary>
         private void OnDataSourceToggleChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
+            // Only persistence-relevant properties should trigger a save. The key-test status
+            // properties fire on every Test press and would otherwise rewrite settings 3x per
+            // press with identical content.
+            if (e.PropertyName is not (nameof(DataSourceToggle.IsEnabled)
+                                    or nameof(DataSourceToggle.ApiKey)))
+                return;
+
             // Save enabled sources and API keys to settings
             _userSettings.EnabledDataSources = DataSources
                 .Where(d => d.IsEnabled)
@@ -1988,6 +1996,46 @@ namespace StockPicker.Desktop.ViewModels
                     ? null : new TiingoStockDataService(ds.ApiKey),
                 _                           => null
             };
+        }
+
+        /// <summary>Liquid, always-covered symbol used purely as an API-key probe.</summary>
+        private const string KeyProbeSymbol = "AAPL";
+
+        /// <summary>
+        /// Backs the Settings "Test" button: returns true only when <paramref name="ds"/>'s
+        /// API key actually returns usable data.
+        ///
+        /// Finnhub is probed through <c>/stock/metric</c> rather than a quote endpoint,
+        /// because that is the endpoint the cash-heavy &amp; low-debt screen depends on — a
+        /// key that fetches quotes but is not entitled to fundamentals would otherwise test
+        /// "OK" while leaving the D/E, NetDebt/Eq, and ROE columns permanently blank.
+        ///
+        /// Every other keyed source is probed with a single latest-quote call.
+        /// </summary>
+        /// <remarks>
+        /// Intentionally coarse — see <see cref="DataSourceToggle.KeyValidator"/>. Callers get
+        /// a bare pass/fail, never a reason, and this never throws.
+        /// </remarks>
+        private async Task<bool> ValidateApiKeyAsync(DataSourceToggle ds)
+        {
+            if (string.IsNullOrWhiteSpace(ds.ApiKey)) return false;
+
+            try
+            {
+                if (ds.SourceType == DataSourceType.Finnhub)
+                {
+                    var finnhub = new FinnhubStockDataService(ds.ApiKey);
+                    return await finnhub.GetFundamentalsAsync(KeyProbeSymbol) != null;
+                }
+
+                var svc = BuildServiceForSource(ds);
+                if (svc == null) return false;
+                return await svc.GetLatestQuoteAsync(KeyProbeSymbol) != null;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
