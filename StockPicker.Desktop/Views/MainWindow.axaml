@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:StockPicker.Desktop.ViewModels"
         xmlns:conv="clr-namespace:StockPicker.Desktop.Converters"
@@ -779,8 +779,34 @@
                                     <!-- 31: ROE -->
                                     <DataGridTextColumn Header="ROE" Binding="{Binding RoeDisplay}"
                                                         SortMemberPath="ReturnOnEquityPct" Width="54" />
+                                    <!-- 32: Cash-heavy & low-debt pass/fail. Sorts on the bool so
+                                         clicking the header groups qualifying stocks together
+                                         instead of hiding the rest, which is what the filter
+                                         toggle in the bar above does. -->
+                                    <DataGridTextColumn Header="Cash+LowDebt"
+                                                        Binding="{Binding CashHeavyLowDebtDisplay}"
+                                                        SortMemberPath="IsCashHeavyLowDebt" Width="88" />
 
-                                    <!-- 32: Reasoning — star width, always last -->
+                                    <!-- Analyst 1Y target. quoteSummary is one symbol per
+                                         request, so only the top rows carry these. -->
+                                    <!-- 33: 1Y Target -->
+                                    <DataGridTextColumn Binding="{Binding TargetMeanDisplay}"
+                                                        SortMemberPath="TargetMeanPrice" Width="78">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="1Y Target"
+                                                       ToolTip.Tip="Mean 12-month analyst price target (Yahoo). Only fetched for the top rows." />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+                                    <!-- 34: Target Δ% -->
+                                    <DataGridTextColumn Binding="{Binding TargetDeltaDisplay}"
+                                                        SortMemberPath="TargetDeltaPct" Width="76">
+                                        <DataGridTextColumn.Header>
+                                            <TextBlock Text="Target Δ%"
+                                                       ToolTip.Tip="Upside from the current price to the mean 1-year analyst target. Sortable — highest implied upside first." />
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
+
+                                    <!-- 35: Reasoning — star width, always last -->
                                     <DataGridTextColumn Header="Reasoning" Binding="{Binding Reasoning}" Width="*" />
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -932,14 +958,35 @@
                                 BorderThickness="0,0,0,1" Padding="8,5">
                             <DockPanel>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <!-- Upcoming vs Just reported. Switching swaps which window
+                                         control is live below and which grid columns show. -->
+                                    <ComboBox ItemsSource="{Binding EarningsModeOptions}"
+                                              SelectedItem="{Binding SelectedEarningsMode}"
+                                              Width="118" FontSize="11" Margin="0,0,10,0"
+                                              ToolTip.Tip="Upcoming: stocks that have not reported yet. Just reported: stocks that reported in the last few days, ranked as rebound candidates." />
+
                                     <TextBlock Text="Within:" VerticalAlignment="Center"
-                                               Foreground="#555" Margin="0,0,4,0" FontSize="11" />
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11"
+                                               IsVisible="{Binding !IsJustReportedMode}" />
                                     <ComboBox ItemsSource="{Binding EarningsWindowOptions}"
                                               SelectedItem="{Binding EarningsWindowDays}"
                                               Width="56" FontSize="11"
+                                              IsVisible="{Binding !IsJustReportedMode}"
                                               ToolTip.Tip="Show stocks with earnings within this many days" />
                                     <TextBlock Text="days" VerticalAlignment="Center"
-                                               Foreground="#555" Margin="3,0,12,0" FontSize="11" />
+                                               Foreground="#555" Margin="3,0,12,0" FontSize="11"
+                                               IsVisible="{Binding !IsJustReportedMode}" />
+
+                                    <TextBlock Text="Reported in last:" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="0,0,4,0" FontSize="11"
+                                               IsVisible="{Binding IsJustReportedMode}" />
+                                    <TextBox Text="{Binding EarningsLookbackDays}"
+                                             Width="40" FontSize="11" VerticalContentAlignment="Center"
+                                             IsVisible="{Binding IsJustReportedMode}"
+                                             ToolTip.Tip="How many days back to look for reports (1-30)" />
+                                    <TextBlock Text="days" VerticalAlignment="Center"
+                                               Foreground="#555" Margin="3,0,12,0" FontSize="11"
+                                               IsVisible="{Binding IsJustReportedMode}" />
 
                                     <TextBlock Text="Target ▲:" VerticalAlignment="Center"
                                                Foreground="#555" Margin="0,0,4,0" FontSize="11" />
@@ -1017,10 +1064,66 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Earnings" Binding="{Binding EarningsDateDisplay}" Width="120" SortMemberPath="NextEarningsDate" />
+                                <!-- 1: Earnings date. EarningsDateDisplay reads "in Nd",
+                                     ReportedDisplay reads "Nd ago" — see code-behind, which
+                                     swaps the binding with the mode. -->
+                                <DataGridTextColumn
+                                    Header="Earnings" Binding="{Binding EarningsDateDisplay}"
+                                    Width="130" SortMemberPath="NextEarningsDate" />
                                 <DataGridTextColumn Header="Days" Binding="{Binding DaysUntilEarnings}" Width="50" SortMemberPath="DaysUntilEarnings" />
                                 <DataGridTextColumn Header="Price" Binding="{Binding LastPrice, StringFormat={}{0:F2}}" Width="68" />
                                 <DataGridTextColumn Header="Day Chg%" Binding="{Binding DayChangePctDisplay}" Width="72" />
+
+                                <!-- Post-earnings rebound columns. Shown only in Just-reported
+                                     mode (toggled in code-behind); blank/irrelevant otherwise. -->
+                                <DataGridTextColumn
+                                    Header="Since" Binding="{Binding DaysSinceEarnings}"
+                                    Width="54" SortMemberPath="DaysSinceEarnings" />
+                                <DataGridTextColumn
+                                    Binding="{Binding PostEarningsMoveDisplay}"
+                                    Width="84" SortMemberPath="PostEarningsMovePct">
+                                    <DataGridTextColumn.Header>
+                                        <TextBlock Text="Since Earn%"
+                                                   ToolTip.Tip="Price change from the close before the report to the latest close. Sort ascending to put the hardest-hit names first." />
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn
+                                    Binding="{Binding DrawdownDisplay}"
+                                    Width="80" SortMemberPath="DrawdownPct">
+                                    <DataGridTextColumn.Header>
+                                        <TextBlock Text="Drawdown"
+                                                   ToolTip.Tip="Drop from the highest close in the loaded history to the latest close." />
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn
+                                    Binding="{Binding EpsSurpriseDisplay}"
+                                    Width="112" SortMemberPath="EpsBeat">
+                                    <DataGridTextColumn.Header>
+                                        <TextBlock Text="EPS vs Est"
+                                                   ToolTip.Tip="Reported EPS against the consensus estimate. Blank means no provider has published it yet — not a miss." />
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn
+                                    Header="1Y Target" Binding="{Binding TargetMeanDisplay}"
+                                    Width="78" SortMemberPath="TargetMeanPrice" />
+                                <DataGridTextColumn
+                                    Binding="{Binding TargetDeltaDisplay}"
+                                    Width="80" SortMemberPath="TargetDeltaPct">
+                                    <DataGridTextColumn.Header>
+                                        <TextBlock Text="Target Δ%"
+                                                   ToolTip.Tip="Upside from the current price to the mean 1-year analyst target." />
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn
+                                    Binding="{Binding OpportunityScoreDisplay}"
+                                    Width="72" SortMemberPath="OpportunityScore">
+                                    <DataGridTextColumn.Header>
+                                        <TextBlock Text="Rebound"
+                                                   ToolTip.Tip="0-100 blend of selloff size, remaining analyst upside, and EPS beat. Higher = more like an overreaction." />
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
+
+                                <!-- Upcoming-mode columns. -->
                                 <DataGridTextColumn Header="Impl. Move" Binding="{Binding ExpectedMoveDisplay}" Width="78" SortMemberPath="ExpectedMovePct" />
                                 <DataGridTextColumn Header="Score" Binding="{Binding ScoreDisplay}" Width="56" SortMemberPath="LikelihoodScore" />
                                 <DataGridTextColumn Header="Flag" Binding="{Binding FlagDisplay}" Width="80" SortMemberPath="MeetsThreshold" />

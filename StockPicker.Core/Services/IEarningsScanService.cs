@@ -21,6 +21,21 @@ namespace StockPicker.Services
         /// <param name="useMargin">When true, populate the margin-adjusted return fields.</param>
         /// <param name="marginPercent">Equity margin requirement % (leverage = 100 / marginPercent).</param>
         /// <param name="marginRatePercent">Annualized margin interest rate %.</param>
+        /// <param name="mode">
+        /// <see cref="EarningsScanMode.Upcoming"/> (default) keeps the forward-looking behaviour
+        /// described above. <see cref="EarningsScanMode.JustReported"/> instead returns stocks
+        /// that reported within <paramref name="lookbackDays"/>, scored as rebound candidates on
+        /// selloff size, analyst upside, and EPS beat. Margin figures are not computed in that
+        /// mode — there is no pending event to hold a leveraged position into.
+        /// </param>
+        /// <param name="lookbackDays">
+        /// How many days back to look when <paramref name="mode"/> is
+        /// <see cref="EarningsScanMode.JustReported"/>. Ignored otherwise.
+        /// </param>
+        /// <remarks>
+        /// The last two parameters are optional so existing callers compile unchanged and keep
+        /// their current forward-looking behaviour.
+        /// </remarks>
         Task<IReadOnlyList<EarningsPick>> GenerateAsync(
             IReadOnlyList<Stock>                                       universe,
             IReadOnlyDictionary<string, IReadOnlyList<StockQuote>>     history,
@@ -30,6 +45,8 @@ namespace StockPicker.Services
             decimal targetUpPercent,
             bool    useMargin,
             decimal marginPercent,
-            decimal marginRatePercent);
+            decimal marginRatePercent,
+            EarningsScanMode mode = EarningsScanMode.Upcoming,
+            int lookbackDays = 5);
     }
 }

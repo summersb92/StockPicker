@@ -714,6 +714,130 @@ namespace StockPicker.Services
         /// </summary>
         public static AnalystRatings? ParseAnalystRatings(string symbol, string json, DateTime fetchedAtUtc)
         {
+            return ParseAnalystRatingsCore(symbol, json, fetchedAtUtc);
+        }
+
+        // ── Earnings surprise (quoteSummary earningsHistory) ───────────────────
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+            string, (DateTime FetchedAtUtc, EarningsSurprise? Data)> _surpriseCache =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Fetches the most recent reported EPS vs. estimate for one symbol from the
+        /// quoteSummary <c>earningsHistory</c> module. Same one-symbol-per-request and 24h
+        /// cache characteristics as <see cref="GetAnalystRatingsAsync"/>.
+        ///
+        /// IMPORTANT LIMITATION: earningsHistory lags. A company that reported in the last few
+        /// days will usually still show its PREVIOUS quarter as the newest entry, so this is the
+        /// fallback source, used when Finnhub is unavailable. See
+        /// <c>FinnhubStockDataService.GetEarningsSurpriseAsync</c> for the fresher path.
+        ///
+        /// Returns null on any HTTP or parse failure — an earnings-data failure must never break
+        /// anything else.
+        /// </summary>
+        public async Task<EarningsSurprise?> GetEarningsSurpriseAsync(
+            string symbol, System.Threading.CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return null;
+
+            if (_surpriseCache.TryGetValue(symbol, out var cachedSurprise))
+            {
+                var ttl = cachedSurprise.Data != null ? _analystTtl : _analystFailureTtl;
+                if (DateTime.UtcNow - cachedSurprise.FetchedAtUtc < ttl)
+                    return cachedSurprise.Data;
+            }
+
+            try
+            {
+                var crumb = await EnsureCrumbAsync();
+                var url = $"https://query2.finance.yahoo.com/v10/finance/quoteSummary/" +
+                          $"{Uri.EscapeDataString(symbol)}" +
+                          "?modules=earningsHistory" +
+                          (crumb != null ? $"&crumb={Uri.EscapeDataString(crumb)}" : "");
+
+                using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    _surpriseCache[symbol] = (DateTime.UtcNow, null);
+                    return null;
+                }
+
+                var json     = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var surprise = ParseEarningsSurprise(symbol, json);
+                _surpriseCache[symbol] = (DateTime.UtcNow, surprise);
+                return surprise;
+            }
+            catch (System.OperationCanceledException)
+            {
+                return null;
+            }
+            catch
+            {
+                _surpriseCache[symbol] = (DateTime.UtcNow, null);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Parses the newest entry out of a quoteSummary <c>earningsHistory</c> payload.
+        ///
+        /// Yahoo's <c>surprisePercent</c> is a FRACTION (0.1012 = +10.12%) and is multiplied by
+        /// 100 here so <see cref="EarningsSurprise"/> is uniformly in percent regardless of
+        /// which provider filled it. Public and static so it is testable offline against canned
+        /// fixtures, matching <see cref="ParseAnalystRatings"/>.
+        /// </summary>
+        public static EarningsSurprise? ParseEarningsSurprise(string symbol, string json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+
+                if (!doc.RootElement.TryGetProperty("quoteSummary", out var qs)) return null;
+                if (!qs.TryGetProperty("result", out var resultArr) ||
+                    resultArr.ValueKind != JsonValueKind.Array ||
+                    resultArr.GetArrayLength() == 0)
+                    return null;
+
+                if (!resultArr[0].TryGetProperty("earningsHistory", out var eh) ||
+                    !eh.TryGetProperty("history", out var hist) ||
+                    hist.ValueKind != JsonValueKind.Array)
+                    return null;
+
+                EarningsSurprise? newest = null;
+                foreach (var h in hist.EnumerateArray())
+                {
+                    // "quarter" is a wrapped unix timestamp for the period end.
+                    var quarterRaw = GetRawLong(h, "quarter");
+                    if (!quarterRaw.HasValue) continue;
+                    var period = DateTimeOffset.FromUnixTimeSeconds(quarterRaw.Value).UtcDateTime.Date;
+
+                    if (newest != null && period <= newest.PeriodEnd) continue;
+
+                    var fractional = GetRawDouble(h, "surprisePercent");
+
+                    newest = new EarningsSurprise
+                    {
+                        Symbol          = symbol.ToUpperInvariant(),
+                        PeriodEnd       = period,
+                        EpsActual       = GetRawDouble(h, "epsActual"),
+                        EpsEstimate     = GetRawDouble(h, "epsEstimate"),
+                        // Fraction -> percent. Yahoo and Finnhub disagree on this unit.
+                        SurprisePercent = fractional.HasValue ? fractional.Value * 100.0 : null,
+                        Source          = DataSourceType.YahooFinance,
+                    };
+                }
+
+                return newest;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static AnalystRatings? ParseAnalystRatingsCore(string symbol, string json, DateTime fetchedAtUtc)
+        {
             try
             {
                 using var doc = JsonDocument.Parse(json);

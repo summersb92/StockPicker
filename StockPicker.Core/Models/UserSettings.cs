@@ -82,6 +82,18 @@ namespace StockPicker.Models
         /// <summary>Assumed annualized margin interest rate %. Default 12.5%.</summary>
         public decimal EarningsMarginRatePct { get; set; } = 12.5m;
 
+        /// <summary>
+        /// Which side of the earnings date the scanner looks at. Stored as the enum name so a
+        /// future mode does not silently remap an existing user's setting the way an int would.
+        /// </summary>
+        public string EarningsMode { get; set; } = nameof(EarningsScanMode.Upcoming);
+
+        /// <summary>
+        /// How many days back the "just reported" mode looks. Default 5 — roughly one trading
+        /// week, long enough to catch a print and the days of drift after it.
+        /// </summary>
+        public int EarningsLookbackDays { get; set; } = 5;
+
         // ── News briefing composition ──────────────────────────────────────────
         public bool NewsIncludePositions   { get; set; } = true;
         public bool NewsIncludeBestAny     { get; set; } = true;

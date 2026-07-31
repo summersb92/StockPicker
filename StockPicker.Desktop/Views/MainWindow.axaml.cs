@@ -135,9 +135,12 @@ public partial class MainWindow : Window
                 SyncDetailsColumn();
             else if (args.PropertyName == nameof(MainViewModel.NewsReport))
                 Dispatcher.UIThread.Post(RenderNews, DispatcherPriority.Background);
+            else if (args.PropertyName == nameof(MainViewModel.IsJustReportedMode))
+                ApplyEarningsModeColumns();
         };
 
         SyncDetailsColumn();
+        ApplyEarningsModeColumns();
         RenderNews();
 
         await vm.StartupAsync();
@@ -192,7 +195,10 @@ public partial class MainWindow : Window
         _recColumnToggles[29] = vm.ColDebtToEquity;
         _recColumnToggles[30] = vm.ColNetDebtToEquity;
         _recColumnToggles[31] = vm.ColRoe;
-        _recColumnToggles[32] = vm.ColReasoning;
+        _recColumnToggles[32] = vm.ColCashHeavyLowDebt;
+        _recColumnToggles[33] = vm.ColTargetMean;
+        _recColumnToggles[34] = vm.ColTargetDelta;
+        _recColumnToggles[35] = vm.ColReasoning;
     }
 
     private void ApplyColumnVisibility()
@@ -201,6 +207,40 @@ public partial class MainWindow : Window
         foreach (var (index, toggle) in _recColumnToggles)
             if (index < cols.Count)
                 cols[index].IsVisible = toggle.IsVisible;
+    }
+
+    /// <summary>
+    /// Shows the rebound columns only in Just-reported mode and the implied-move/margin columns
+    /// only in Upcoming mode, so neither list carries a block of permanently blank cells.
+    ///
+    /// Done in code-behind rather than per-column IsVisible bindings because Avalonia's
+    /// DataGridColumn is not part of the visual tree and does not inherit the grid's DataContext,
+    /// so a {Binding} on it never resolves — the same reason BuildRecColumnMap exists.
+    /// </summary>
+    private void ApplyEarningsModeColumns()
+    {
+        if (VM is not { } vm) return;
+        bool reported = vm.IsJustReportedMode;
+
+        var cols = EarningsGridFull.Columns;
+
+        // Indices match the DataGrid.Columns order in MainWindow.axaml, the same convention
+        // BuildRecColumnMap uses. x:Name is not an option here: DataGridColumn is not a Control,
+        // so the XAML compiler emits no field for it.
+        const int EarningsDate = 1;
+        int[] reboundCols  = { 5, 6, 7, 8, 9, 10, 11 };  // Since … Rebound
+        int[] upcomingCols = { 12, 13, 16, 17, 18 };     // Impl. Move, Score, margin trio
+
+        foreach (var i in reboundCols)
+            if (i < cols.Count) cols[i].IsVisible = reported;
+        foreach (var i in upcomingCols)
+            if (i < cols.Count) cols[i].IsVisible = !reported;
+
+        // "in 5d" vs "5d ago" — same underlying date, opposite direction.
+        if (EarningsDate < cols.Count && cols[EarningsDate] is DataGridTextColumn dateCol)
+            dateCol.Binding = new Avalonia.Data.Binding(
+                reported ? nameof(EarningsPick.ReportedDisplay)
+                         : nameof(EarningsPick.EarningsDateDisplay));
     }
 
     // ── Glossary-backed header tooltips ─────────────────────────────────────────
@@ -233,7 +273,7 @@ public partial class MainWindow : Window
             [11] = "Confidence",
             [12] = "BuyDate",
             [13] = "SellDate",
-            [32] = "Reasoning",
+            [35] = "Reasoning",
         });
 
         // Compact recommendations grid (narrow layout): fewer columns, same source of truth.
@@ -280,17 +320,19 @@ public partial class MainWindow : Window
         // Earnings grids.
         GlossaryTooltips.Apply(EarningsGridFull, new Dictionary<int, string>
         {
+            // Indices shifted by the seven post-earnings columns inserted at 5..11; those
+            // carry their own tooltips in the axaml and are deliberately absent here.
             [0]  = "Symbol",
             [1]  = "NextEarningsDate",
             [2]  = "DaysUntilEarnings",
             [3]  = "LastPrice",
             [4]  = "DayChangePct",
-            [5]  = "ExpectedMovePct",
-            [6]  = "LikelihoodScore",
-            [7]  = "MeetsThreshold",
-            [8]  = "MomentumPct",
-            [9]  = "Leverage",
-            [12] = "TriggerReason",
+            [12] = "ExpectedMovePct",
+            [13] = "LikelihoodScore",
+            [14] = "MeetsThreshold",
+            [15] = "MomentumPct",
+            [16] = "Leverage",
+            [19] = "TriggerReason",
         });
         GlossaryTooltips.Apply(EarningsGridCompact, new Dictionary<int, string>
         {

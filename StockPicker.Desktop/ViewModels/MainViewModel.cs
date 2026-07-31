@@ -216,6 +216,10 @@ namespace StockPicker.Desktop.ViewModels
             // Restore Earnings scanner settings
             _earningsWindowDays     = _userSettings.EarningsWindowDays;
             _earningsTargetUpPercent = _userSettings.EarningsTargetUpPercent;
+            _earningsLookbackDays   = Math.Clamp(_userSettings.EarningsLookbackDays, 1, 30);
+            // Unknown/legacy values fall back to Upcoming rather than throwing.
+            _earningsMode = Enum.TryParse<EarningsScanMode>(_userSettings.EarningsMode, out var savedMode)
+                ? savedMode : EarningsScanMode.Upcoming;
             _earningsUseMargin      = _userSettings.EarningsUseMargin;
             _earningsMarginPercent  = _userSettings.EarningsMarginPercent;
             _earningsMarginRatePct  = _userSettings.EarningsMarginRatePct;
@@ -270,6 +274,9 @@ namespace StockPicker.Desktop.ViewModels
             ColDebtToEquity    = new ColumnToggle("D/E",          false);
             ColNetDebtToEquity = new ColumnToggle("NetDebt/Eq",   false);
             ColRoe             = new ColumnToggle("ROE",          false);
+            ColCashHeavyLowDebt = new ColumnToggle("Cash+LowDebt", false);
+            ColTargetMean       = new ColumnToggle("1Y Target",    false);
+            ColTargetDelta      = new ColumnToggle("Target Δ%",    false);
 
             AllColumns = new[]
             {
@@ -284,6 +291,7 @@ namespace StockPicker.Desktop.ViewModels
                 ColIV, ColTheta,
                 ColSMA20, ColSMA50, ColVolTrend,
                 ColCashToMktCap, ColDebtToEquity, ColNetDebtToEquity, ColRoe,
+                ColCashHeavyLowDebt, ColTargetMean, ColTargetDelta,
                 ColReasoning,
             };
 
@@ -577,6 +585,65 @@ namespace StockPicker.Desktop.ViewModels
             }
         }
 
+        // ── Earnings mode (Upcoming vs Just reported) ─────────────────────────
+
+        /// <summary>Labels for the earnings mode selector; index matches the enum order.</summary>
+        public static string[] EarningsModeOptions { get; } =
+            { "Upcoming", "Just reported" };
+
+        private EarningsScanMode _earningsMode = EarningsScanMode.Upcoming;
+        /// <summary>Which side of the earnings date the scanner looks at.</summary>
+        public EarningsScanMode EarningsMode
+        {
+            get => _earningsMode;
+            set
+            {
+                if (SetProperty(ref _earningsMode, value))
+                {
+                    _userSettings.EarningsMode = value.ToString();
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    OnPropertyChanged(nameof(SelectedEarningsMode));
+                    OnPropertyChanged(nameof(IsJustReportedMode));
+                    _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
+        /// <summary>
+        /// String-facing adapter for the mode ComboBox. The grid columns bind
+        /// <see cref="IsJustReportedMode"/> to hide post-earnings columns in Upcoming mode.
+        /// </summary>
+        public string SelectedEarningsMode
+        {
+            get => EarningsModeOptions[(int)_earningsMode];
+            set
+            {
+                var idx = Array.IndexOf(EarningsModeOptions, value ?? "");
+                EarningsMode = idx >= 0 ? (EarningsScanMode)idx : EarningsScanMode.Upcoming;
+            }
+        }
+
+        /// <summary>True when the post-earnings rebound columns are relevant.</summary>
+        public bool IsJustReportedMode => _earningsMode == EarningsScanMode.JustReported;
+
+        private int _earningsLookbackDays = 5;
+        /// <summary>How many days back "just reported" mode looks.</summary>
+        public int EarningsLookbackDays
+        {
+            get => _earningsLookbackDays;
+            set
+            {
+                var clamped = Math.Clamp(value, 1, 30);
+                if (SetProperty(ref _earningsLookbackDays, clamped))
+                {
+                    _userSettings.EarningsLookbackDays = clamped;
+                    _ = _userSettingsService.SaveAsync(_userSettings);
+                    if (_earningsMode == EarningsScanMode.JustReported)
+                        _ = GenerateEarningsPicksAsync();
+                }
+            }
+        }
+
         private decimal _earningsTargetUpPercent = 5.0m;
         /// <summary>Target upside % the likelihood flag is measured against.</summary>
         public decimal EarningsTargetUpPercent
@@ -790,6 +857,9 @@ namespace StockPicker.Desktop.ViewModels
         public ColumnToggle ColDebtToEquity    { get; }
         public ColumnToggle ColNetDebtToEquity { get; }
         public ColumnToggle ColRoe             { get; }
+        public ColumnToggle ColCashHeavyLowDebt { get; }
+        public ColumnToggle ColTargetMean      { get; }
+        public ColumnToggle ColTargetDelta     { get; }
 
         public IReadOnlyList<ColumnToggle> AllColumns { get; }
 
@@ -2010,6 +2080,30 @@ namespace StockPicker.Desktop.ViewModels
         private const string KeyProbeSymbol = "AAPL";
 
         /// <summary>
+        /// How many top recommendations the background two-pass enriches. Both sources it
+        /// draws on accept only one symbol per request, so this is a deliberate coverage
+        /// limit, not a page size — rows past it keep blank target/fundamental columns.
+        /// </summary>
+        private const int TwoPassRowCount = 20;
+
+        /// <summary>Pacing between per-symbol analyst requests in the two-pass.</summary>
+        private const int AnalystProbeDelayMs = 150;
+
+        /// <summary>
+        /// How many post-earnings picks get EPS/target enrichment. Each one costs up to three
+        /// single-symbol requests, so this is bounded rather than the full 50-pick list.
+        /// </summary>
+        private const int ReportedEnrichCount = 25;
+
+        /// <summary>
+        /// How far before the announcement a reported fiscal period may end and still be treated
+        /// as that announcement's numbers. Companies report a quarter that closed weeks earlier
+        /// (a 30 Jun quarter announced 30 Jul), so a generous window is correct here — but not so
+        /// generous that the PREVIOUS quarter, roughly 90 days back, slips through.
+        /// </summary>
+        private const int ReportedPeriodToleranceDays = 45;
+
+        /// <summary>
         /// Backs the Settings "Test" button: returns true only when <paramref name="ds"/>'s
         /// API key actually returns usable data.
         ///
@@ -2526,12 +2620,17 @@ namespace StockPicker.Desktop.ViewModels
             // Avalonia needs the explicit raise so the button enables after the first scan.
             ((RelayCommand)AskAINewsCommand).RaiseCanExecuteChanged();
 
-            // ── Finnhub two-pass enrichment ───────────────────────────────────────
-            // Fire a background task that fetches D/E, net-D/E, and ROE for the top-20
-            // recommendations from Finnhub, then patches those fields and redraws the grid.
-            // This is intentionally fire-and-forget: the grid is already usable from the
-            // first ReplaceAll above.  If a newer scan starts (_scanGeneration changes),
-            // this pass bails to avoid clobbering fresh results.
+            // ── Background two-pass enrichment ────────────────────────────────────
+            // Fetches the data that cannot ride along on the batch quote call and patches it
+            // into the top rows, then redraws once. Two sources, both limited to one symbol
+            // per request, which is why coverage stops at TwoPassRowCount:
+            //   • Yahoo quoteSummary → analyst 1Y price targets (always available, 24h cached)
+            //   • Finnhub /stock/metric → D/E, net-D/E, ROE (only when a key is configured)
+            //
+            // Intentionally fire-and-forget: the grid is already usable from the ReplaceAll
+            // above. If a newer scan starts (_scanGeneration changes), this bails rather than
+            // clobbering fresh results. Both fetches share one pass so the grid redraws once
+            // instead of two passes racing each other through ReplaceAll.
             var finnhubDs = DataSources.FirstOrDefault(
                 d => d.SourceType == DataSourceType.Finnhub && d.IsEnabled &&
                      !string.IsNullOrWhiteSpace(d.ApiKey));
@@ -2545,48 +2644,69 @@ namespace StockPicker.Desktop.ViewModels
                 finnhubDs = null;
             }
 
-            if (finnhubDs != null)
             {
-                var top20 = recs.Take(20).ToList();
-                var top20Syms = top20.Select(r => r.Symbol).ToList();
-                var finnhubSvc = new FinnhubStockDataService(finnhubDs.ApiKey);
+                var topRows = recs.Take(TwoPassRowCount).ToList();
+                var topSyms = topRows.Select(r => r.Symbol).ToList();
+                var finnhubSvc = finnhubDs != null ? new FinnhubStockDataService(finnhubDs.ApiKey) : null;
                 var capturedGen = scanGen;
                 var capturedRecs = recs; // same list that was handed to ReplaceAll
+                var capturedFinnhubDs = finnhubDs;
 
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var fundamentals = await finnhubSvc.GetFundamentalsBatchAsync(top20Syms);
-
-                        // Key rejected: remember it so later scans skip this pass entirely, and
-                        // show the verdict in Settings so it stops being an invisible failure.
-                        if (finnhubSvc.AuthFailed)
+                        // ── Analyst price targets (Yahoo, no key needed) ──────────────
+                        foreach (var rec in topRows)
                         {
-                            var rejectedKey = finnhubDs.ApiKey;
-                            await Dispatcher.UIThread.InvokeAsync(() =>
+                            if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
+
+                            var ratings = await _dataService.GetAnalystRatingsAsync(rec.Symbol);
+                            if (ratings != null)
                             {
-                                _finnhubRejectedKey = rejectedKey;
-                                finnhubDs.MarkKeyInvalid();
-                            });
-                            return;
+                                rec.TargetMeanPrice         = ratings.TargetMeanPrice;
+                                rec.NumberOfAnalystOpinions = ratings.NumberOfAnalystOpinions;
+                            }
+
+                            // Gentle pacing so a 20-symbol sweep doesn't look like a burst.
+                            // Cache hits still pay this, but 20 x 150 ms is invisible against a
+                            // pass that is already off the UI thread.
+                            await Task.Delay(AnalystProbeDelayMs);
                         }
 
-                        // Bail if a newer scan has already run.
                         if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
-                        if (fundamentals.Count == 0) return;
 
-                        foreach (var rec in top20)
+                        // ── Finnhub fundamentals (only when a key is configured) ──────
+                        if (finnhubSvc != null && capturedFinnhubDs != null)
                         {
-                            if (fundamentals.TryGetValue(rec.Symbol, out var f))
+                            var fundamentals = await finnhubSvc.GetFundamentalsBatchAsync(topSyms);
+
+                            // Key rejected: remember it so later scans skip this entirely, and
+                            // show the verdict in Settings so it stops being invisible.
+                            if (finnhubSvc.AuthFailed)
                             {
-                                rec.DebtToEquity    = f.DebtToEquity;
-                                rec.NetDebtToEquity = f.NetDebtToEquity;
-                                rec.ReturnOnEquityPct = f.ReturnOnEquity;
+                                var rejectedKey = capturedFinnhubDs.ApiKey;
+                                await Dispatcher.UIThread.InvokeAsync(() =>
+                                {
+                                    _finnhubRejectedKey = rejectedKey;
+                                    capturedFinnhubDs.MarkKeyInvalid();
+                                });
+                            }
+                            else
+                            {
+                                foreach (var rec in topRows)
+                                {
+                                    if (fundamentals.TryGetValue(rec.Symbol, out var f))
+                                    {
+                                        rec.DebtToEquity      = f.DebtToEquity;
+                                        rec.NetDebtToEquity   = f.NetDebtToEquity;
+                                        rec.ReturnOnEquityPct = f.ReturnOnEquity;
+                                    }
+                                }
                             }
                         }
 
-                        // Bail again in case a scan started while we were in foreach.
+                        // Bail again in case a scan started while we were fetching.
                         if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;
 
                         // Refresh the grid on the UI thread so bindings update.
@@ -2604,7 +2724,7 @@ namespace StockPicker.Desktop.ViewModels
                     catch (Exception ex)
                     {
                         System.Diagnostics.Debug.WriteLine(
-                            $"[Finnhub two-pass] background enrichment error: {ex.Message}");
+                            $"[two-pass] background enrichment error: {ex.Message}");
                     }
                 });
             }
@@ -2710,7 +2830,11 @@ namespace StockPicker.Desktop.ViewModels
                 return;
             }
 
-            EarningsStatus = $"Scanning for earnings in the next {_earningsWindowDays} days…";
+            bool reported = _earningsMode == EarningsScanMode.JustReported;
+
+            EarningsStatus = reported
+                ? $"Scanning for earnings reported in the last {_earningsLookbackDays} days…"
+                : $"Scanning for earnings in the next {_earningsWindowDays} days…";
 
             try
             {
@@ -2730,19 +2854,114 @@ namespace StockPicker.Desktop.ViewModels
                     _earningsTargetUpPercent,
                     _earningsUseMargin,
                     _earningsMarginPercent,
-                    _earningsMarginRatePct);
+                    _earningsMarginRatePct,
+                    _earningsMode,
+                    _earningsLookbackDays);
 
                 EarningsPicks.ReplaceAll(picks);
 
-                int flagged = picks.Count(p => p.MeetsThreshold);
-                EarningsStatus = picks.Count > 0
-                    ? $"{picks.Count} with earnings ≤ {_earningsWindowDays}d  •  {flagged} flagged ≥ {_earningsTargetUpPercent:0.#}%"
-                    : $"No upcoming earnings within {_earningsWindowDays} days (data source may not report dates for these symbols).";
+                if (!reported)
+                {
+                    int flagged = picks.Count(p => p.MeetsThreshold);
+                    EarningsStatus = picks.Count > 0
+                        ? $"{picks.Count} with earnings ≤ {_earningsWindowDays}d  •  {flagged} flagged ≥ {_earningsTargetUpPercent:0.#}%"
+                        : $"No upcoming earnings within {_earningsWindowDays} days (data source may not report dates for these symbols).";
+                    return;
+                }
+
+                if (picks.Count == 0)
+                {
+                    EarningsStatus =
+                        $"No earnings reported in the last {_earningsLookbackDays} days " +
+                        "(data source may not report dates for these symbols).";
+                    return;
+                }
+
+                // The rebound score needs EPS surprise and analyst targets, both one request per
+                // symbol. The grid is already populated and sorted by selloff size, so enrich in
+                // the background and rescore as data lands.
+                EarningsStatus =
+                    $"{picks.Count} reported in the last {_earningsLookbackDays}d  •  " +
+                    "fetching EPS surprise and analyst targets…";
+                await EnrichReportedPicksAsync(picks);
             }
             catch (Exception ex)
             {
                 EarningsStatus = $"Earnings scan error: {ex.Message}";
             }
+        }
+
+        /// <summary>
+        /// Fills EPS surprise and analyst price targets onto post-earnings picks, then rescores
+        /// them so the rebound ranking reflects the new data.
+        ///
+        /// Both fetches are one symbol per request, so this is capped at
+        /// <see cref="ReportedEnrichCount"/> and runs after the grid is already usable. EPS
+        /// prefers Finnhub — Yahoo's earningsHistory lags the freshest prints by a few days,
+        /// which is exactly the window this mode targets — and falls back to Yahoo when Finnhub
+        /// is absent, unkeyed, or rejected.
+        /// </summary>
+        private async Task EnrichReportedPicksAsync(IReadOnlyList<EarningsPick> picks)
+        {
+            var finnhubDs = DataSources.FirstOrDefault(
+                d => d.SourceType == DataSourceType.Finnhub && d.IsEnabled &&
+                     !string.IsNullOrWhiteSpace(d.ApiKey) &&
+                     !string.Equals(_finnhubRejectedKey, d.ApiKey, StringComparison.Ordinal));
+
+            var finnhubSvc = finnhubDs != null ? new FinnhubStockDataService(finnhubDs.ApiKey) : null;
+            var targets = picks.Take(ReportedEnrichCount).ToList();
+            int withSurprise = 0;
+
+            foreach (var pick in targets)
+            {
+                // Abandon quietly if the user switched modes or a rescan replaced the list.
+                if (!ReferenceEquals(EarningsPicks.FirstOrDefault(), picks.FirstOrDefault())) return;
+
+                EarningsSurprise? surprise = null;
+                if (finnhubSvc != null && !finnhubSvc.AuthFailed)
+                    surprise = await finnhubSvc.GetEarningsSurpriseAsync(pick.Symbol);
+
+                // Finnhub off, unkeyed, rejected, or simply without coverage → try Yahoo.
+                // GetEarningsSurpriseAsync is Yahoo-specific rather than on IStockDataService,
+                // matching how the Finnhub fundamentals call is kept off the shared interface.
+                if (surprise == null && _dataService is YahooFinanceStockDataService yahooSvc)
+                    surprise = await yahooSvc.GetEarningsSurpriseAsync(pick.Symbol);
+
+                // Only accept a surprise that actually belongs to THIS announcement. Yahoo often
+                // still serves the previous quarter for a fresh print; attributing that to today's
+                // report would invent a beat that has not been published.
+                if (surprise != null &&
+                    surprise.PeriodEnd >= pick.NextEarningsDate.AddDays(-ReportedPeriodToleranceDays))
+                {
+                    pick.Surprise = surprise;
+                    withSurprise++;
+                }
+
+                var ratings = await _dataService.GetAnalystRatingsAsync(pick.Symbol);
+                if (ratings != null)
+                    pick.TargetMeanPrice = ratings.TargetMeanPrice;
+
+                EarningsScanService.ScoreRebound(pick);
+                await Task.Delay(AnalystProbeDelayMs);
+            }
+
+            if (finnhubSvc is { AuthFailed: true } && finnhubDs != null)
+            {
+                _finnhubRejectedKey = finnhubDs.ApiKey;
+                finnhubDs.MarkKeyInvalid();
+            }
+
+            // Rebound score only becomes meaningful now, so reorder on it.
+            var rescored = picks.OrderByDescending(p => p.OpportunityScore)
+                                .ThenBy(p => p.PostEarningsMovePct ?? 0)
+                                .ToList();
+            EarningsPicks.ReplaceAll(rescored);
+
+            int flagged = rescored.Count(p => p.MeetsThreshold);
+            EarningsStatus =
+                $"{rescored.Count} reported in the last {_earningsLookbackDays}d  •  " +
+                $"{flagged} sold off but beat with ≥ {_earningsTargetUpPercent:0.#}% upside  •  " +
+                $"EPS surprise for {withSurprise}/{targets.Count}";
         }
 
         // ── Market index bar ──────────────────────────────────────────────────

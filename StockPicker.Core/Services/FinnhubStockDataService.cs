@@ -408,6 +408,90 @@ namespace StockPicker.Services
             return result;
         }
 
+        // ── Earnings surprise ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Fetches the most recent reported EPS vs. estimate for <paramref name="symbol"/> from
+        /// GET /stock/earnings?symbol={sym}.
+        ///
+        /// The response is a flat array of
+        /// <c>{ "actual": n, "estimate": n, "period": "YYYY-MM-DD", "surprise": n,
+        /// "surprisePercent": n, "quarter": n, "year": n }</c>, newest first in practice but
+        /// not guaranteed, so entries are sorted by period descending.
+        ///
+        /// Finnhub's <c>surprisePercent</c> is ALREADY a percent (10.12 = +10.12%) — unlike
+        /// Yahoo's, which is a fraction. No conversion here; see <see cref="EarningsSurprise"/>.
+        ///
+        /// Preferred over Yahoo for freshly-reported quarters: Finnhub publishes the new period
+        /// within a day, whereas Yahoo's earningsHistory can lag by more.
+        ///
+        /// Returns null on any non-200 (setting <see cref="AuthFailed"/> for 401/403) or on
+        /// parse failure — never throws to the caller.
+        /// </summary>
+        public async Task<EarningsSurprise?> GetEarningsSurpriseAsync(
+            string symbol, System.Threading.CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(symbol)) return null;
+
+            try
+            {
+                var url = $"{BaseUrl}/stock/earnings" +
+                          $"?symbol={Uri.EscapeDataString(symbol)}" +
+                          $"&token={Uri.EscapeDataString(_apiKey)}";
+
+                using var request  = new HttpRequestMessage(HttpMethod.Get, url);
+                using var response = await _http.SendAsync(request, ct);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var status = (int)response.StatusCode;
+                    if (status is 401 or 403) AuthFailed = true;
+                    Debug.WriteLine($"[Finnhub] GetEarningsSurpriseAsync({symbol}) non-200: {status}");
+                    return null;
+                }
+
+                var json = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+
+                EarningsSurprise? newest = null;
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    var periodText = GetString(el, "period");
+                    if (!DateTime.TryParse(periodText, out var period)) continue;
+
+                    if (newest != null && period <= newest.PeriodEnd) continue;
+
+                    newest = new EarningsSurprise
+                    {
+                        Symbol          = symbol.ToUpperInvariant(),
+                        PeriodEnd       = period.Date,
+                        EpsActual       = GetDoubleValue(el, "actual"),
+                        EpsEstimate     = GetDoubleValue(el, "estimate"),
+                        SurprisePercent = GetDoubleValue(el, "surprisePercent"),
+                        Source          = DataSourceType.Finnhub,
+                    };
+                }
+
+                return newest;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Finnhub] GetEarningsSurpriseAsync({symbol}) error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>Reads a plain (unwrapped) numeric property, tolerating nulls and strings.</summary>
+        private static double? GetDoubleValue(JsonElement el, string key) =>
+            el.TryGetProperty(key, out var p) && p.ValueKind == JsonValueKind.Number
+                ? p.GetDouble() : null;
+
         /// <summary>
         /// Reads a Finnhub metric series array for <paramref name="key"/> and returns
         /// the value from the most recent period that has a non-null entry.

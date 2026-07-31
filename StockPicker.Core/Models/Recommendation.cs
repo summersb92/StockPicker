@@ -120,6 +120,29 @@ namespace StockPicker.Models
         /// </summary>
         public double?  ReturnOnEquityPct { get; set; }
 
+        // ── Analyst price target (Yahoo quoteSummary two-pass) ───────────────
+        /// <summary>
+        /// Mean 12-month analyst price target (Yahoo financialData.targetMeanPrice).
+        ///
+        /// Populated only for the top recommendations by the background enrichment pass:
+        /// quoteSummary accepts one symbol per request, so it cannot be batched the way the
+        /// main quote call is. Rows outside that set leave this null and display blank.
+        /// </summary>
+        public decimal? TargetMeanPrice { get; set; }
+
+        /// <summary>How many analysts contribute to <see cref="TargetMeanPrice"/>.</summary>
+        public int? NumberOfAnalystOpinions { get; set; }
+
+        /// <summary>
+        /// Upside/downside from the current price to the mean 1-year target, in percent.
+        /// Positive means analysts see the stock higher than it trades today.
+        /// Null when either price is missing.
+        /// </summary>
+        public double? TargetDeltaPct =>
+            (TargetMeanPrice.HasValue && LastPrice.HasValue && LastPrice.Value != 0)
+                ? (double)((TargetMeanPrice.Value - LastPrice.Value) / LastPrice.Value * 100m)
+                : (double?)null;
+
         /// <summary>
         /// Cash as a percentage of market cap.  Null when either TotalCash or MarketCap
         /// is unavailable.  Used by <see cref="StockPicker.Services.FundamentalScreen"/>.
@@ -167,6 +190,33 @@ namespace StockPicker.Models
         // ── Fundamental display helpers ────────────────────────────────────────
         // Finnhub units verified 2026-06-25 against a live key (see FinnhubFundamentals).
         // All formatting is kept in one place so a future unit change is a one-line edit.
+
+        /// <summary>
+        /// True when this stock passes the cash-heavy &amp; low-debt screen. Exposed as a
+        /// property (not just the <see cref="StockPicker.Services.FundamentalScreen"/> method)
+        /// so the grid can SORT on it — a sortable column groups qualifying stocks together
+        /// without hiding everything else the way the filter toggle does.
+        ///
+        /// Thresholds deliberately stay in FundamentalScreen; this only delegates, so there is
+        /// still exactly one place to change them.
+        /// </summary>
+        public bool IsCashHeavyLowDebt =>
+            StockPicker.Services.FundamentalScreen.IsCashHeavyLowDebt(this);
+
+        /// <summary>Tick for stocks passing the cash-heavy &amp; low-debt screen, else empty.</summary>
+        public string CashHeavyLowDebtDisplay => IsCashHeavyLowDebt ? "✓" : "";
+
+        /// <summary>Mean 1-year analyst target, e.g. "205.50". Empty when unavailable.</summary>
+        public string TargetMeanDisplay =>
+            TargetMeanPrice.HasValue ? $"{TargetMeanPrice.Value:F2}" : "";
+
+        /// <summary>
+        /// Signed upside to the mean target, e.g. "+18.3%" or "-4.2%". Empty when unavailable.
+        /// </summary>
+        public string TargetDeltaDisplay =>
+            TargetDeltaPct.HasValue
+                ? (TargetDeltaPct.Value >= 0 ? $"+{TargetDeltaPct.Value:F1}%" : $"{TargetDeltaPct.Value:F1}%")
+                : "";
 
         /// <summary>Cash/MktCap as a percentage string, e.g. "18.3%". Empty when null.</summary>
         public string CashToMktCapDisplay =>
