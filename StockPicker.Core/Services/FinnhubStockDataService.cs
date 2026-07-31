@@ -259,7 +259,7 @@ namespace StockPicker.Services
         /// or on parse failure, returns null — never throws to the caller.
         ///
         /// On the FIRST successful parse, raw ratio values are logged via
-        /// <see cref="Debug.WriteLine"/> so units can be confirmed on first run.
+        /// <see cref="Debug.WriteLine(string)"/> so units can be confirmed on first run.
         /// </summary>
         public async Task<FinnhubFundamentals?> GetFundamentalsAsync(
             string symbol, System.Threading.CancellationToken ct = default)
