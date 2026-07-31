@@ -80,6 +80,14 @@ namespace StockPicker.Desktop.ViewModels
         private Dictionary<string, List<DataSourceType>> _cachedSourcesBySymbol = new();
         private DataSourceType? _cachedPrimaryQuoteSource;
 
+        // ── Finnhub key rejection memo ────────────────────────────────────────
+        // The exact key text Finnhub last answered 401/403 for. While a key is on this
+        // list the background fundamentals pass is skipped outright, so a dead key costs
+        // one request for the whole session instead of one per scan. Cleared when the user
+        // edits the key or a Settings "Test" proves it works. Session-only by design —
+        // a key revoked today may be reinstated tomorrow, and a restart re-probes.
+        private string? _finnhubRejectedKey;
+
         // ── Scan generation counter ───────────────────────────────────────────
         // Incremented at the start of every ApplyStrategyAsync call.
         // The Finnhub two-pass background task captures the value at launch and
@@ -2025,7 +2033,12 @@ namespace StockPicker.Desktop.ViewModels
                 if (ds.SourceType == DataSourceType.Finnhub)
                 {
                     var finnhub = new FinnhubStockDataService(ds.ApiKey);
-                    return await finnhub.GetFundamentalsAsync(KeyProbeSymbol) != null;
+                    var ok = await finnhub.GetFundamentalsAsync(KeyProbeSymbol) != null;
+                    // A key that just proved itself must not stay on the skip list, or the
+                    // scan would keep ignoring a key Settings reports as working.
+                    if (ok && string.Equals(_finnhubRejectedKey, ds.ApiKey, StringComparison.Ordinal))
+                        _finnhubRejectedKey = null;
+                    return ok;
                 }
 
                 var svc = BuildServiceForSource(ds);
@@ -2523,6 +2536,15 @@ namespace StockPicker.Desktop.ViewModels
                 d => d.SourceType == DataSourceType.Finnhub && d.IsEnabled &&
                      !string.IsNullOrWhiteSpace(d.ApiKey));
 
+            // A key Finnhub already rejected will be rejected again, so don't spend a request
+            // per scan rediscovering it. Keyed on the key text, so pasting a new one in Settings
+            // clears the block automatically.
+            if (finnhubDs != null &&
+                string.Equals(_finnhubRejectedKey, finnhubDs.ApiKey, StringComparison.Ordinal))
+            {
+                finnhubDs = null;
+            }
+
             if (finnhubDs != null)
             {
                 var top20 = recs.Take(20).ToList();
@@ -2536,6 +2558,19 @@ namespace StockPicker.Desktop.ViewModels
                     try
                     {
                         var fundamentals = await finnhubSvc.GetFundamentalsBatchAsync(top20Syms);
+
+                        // Key rejected: remember it so later scans skip this pass entirely, and
+                        // show the verdict in Settings so it stops being an invisible failure.
+                        if (finnhubSvc.AuthFailed)
+                        {
+                            var rejectedKey = finnhubDs.ApiKey;
+                            await Dispatcher.UIThread.InvokeAsync(() =>
+                            {
+                                _finnhubRejectedKey = rejectedKey;
+                                finnhubDs.MarkKeyInvalid();
+                            });
+                            return;
+                        }
 
                         // Bail if a newer scan has already run.
                         if (System.Threading.Interlocked.Read(ref _scanGeneration) != capturedGen) return;

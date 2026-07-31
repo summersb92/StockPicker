@@ -262,6 +262,28 @@ namespace StockPicker.Services
         /// <see cref="Debug.WriteLine(string)"/> so units can be confirmed on first run.
         /// </summary>
         public async Task<FinnhubFundamentals?> GetFundamentalsAsync(
+            string symbol, System.Threading.CancellationToken ct = default) =>
+            (await TryGetFundamentalsAsync(symbol, ct)).Data;
+
+        /// <summary>
+        /// True once any request on this instance has been rejected with 401/403.
+        ///
+        /// That is a property of the key, not of the symbol being requested, so callers can
+        /// use it to stop asking — see <see cref="GetFundamentalsBatchAsync"/>, which bails
+        /// out of its loop rather than working through the remaining symbols collecting the
+        /// same rejection twenty times over.
+        /// </summary>
+        public bool AuthFailed { get; private set; }
+
+        /// <summary>
+        /// Same fetch as <see cref="GetFundamentalsAsync"/>, but also reports whether the
+        /// failure was an authentication/authorisation rejection (401/403) as opposed to a
+        /// symbol that simply has no coverage.
+        ///
+        /// 429 is deliberately NOT treated as an auth failure — that is a rate limit, which
+        /// a later call may well survive.
+        /// </summary>
+        private async Task<(FinnhubFundamentals? Data, bool AuthFailed)> TryGetFundamentalsAsync(
             string symbol, System.Threading.CancellationToken ct = default)
         {
             try
@@ -276,9 +298,17 @@ namespace StockPicker.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    var status = (int)response.StatusCode;
+                    // 401 Unauthorized / 403 Forbidden say the key is bad, revoked, or not
+                    // entitled to this endpoint. That verdict holds for every other symbol
+                    // too, so flag it and let the caller stop.
+                    var isAuth = status is 401 or 403;
+                    if (isAuth) AuthFailed = true;
+
                     Debug.WriteLine(
-                        $"[Finnhub] GetFundamentalsAsync({symbol}) non-200: {(int)response.StatusCode}");
-                    return null;
+                        $"[Finnhub] GetFundamentalsAsync({symbol}) non-200: {status}" +
+                        (isAuth ? " — key rejected, abandoning remaining symbols." : ""));
+                    return (null, isAuth);
                 }
 
                 var json = await response.Content.ReadAsStringAsync(ct);
@@ -287,7 +317,7 @@ namespace StockPicker.Services
                 if (!doc.RootElement.TryGetProperty("series", out var series))
                 {
                     Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}): no 'series' key.");
-                    return null;
+                    return (null, false);
                 }
 
                 // Prefer annual; fall back to quarterly when annual has no entries.
@@ -305,7 +335,7 @@ namespace StockPicker.Services
                 else
                 {
                     Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}): no annual/quarterly series.");
-                    return null;
+                    return (null, false);
                 }
 
                 var de  = LatestSeriesValue(metricSeries, "totalDebtToEquity");
@@ -317,23 +347,23 @@ namespace StockPicker.Services
                 Debug.WriteLine(
                     $"[Finnhub units] {symbol} totalDebtToEquity raw={de} roe raw={roe}");
 
-                return new FinnhubFundamentals
+                return (new FinnhubFundamentals
                 {
                     DebtToEquity    = de,
                     NetDebtToEquity = nde,
                     ReturnOnEquity  = roe,
                     CurrentRatio    = cr,
-                };
+                }, false);
             }
             catch (OperationCanceledException)
             {
                 // Scan superseded — swallow silently.
-                return null;
+                return (null, false);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}) error: {ex.Message}");
-                return null;
+                return (null, false);
             }
         }
 
@@ -343,6 +373,11 @@ namespace StockPicker.Services
         ///
         /// Returns a dictionary keyed by upper-case symbol containing only non-null results.
         /// Never throws; cancellation via <paramref name="ct"/> exits cleanly.
+        ///
+        /// Stops at the first 401/403. A rejected key rejects every symbol, so continuing
+        /// would spend one request plus a 1.1 s throttle wait per remaining symbol to learn
+        /// nothing new — roughly 21 s for a 20-symbol batch. <see cref="AuthFailed"/> is left
+        /// set so the caller can skip the whole pass next time instead of re-probing.
         /// </summary>
         public async Task<Dictionary<string, FinnhubFundamentals>> GetFundamentalsBatchAsync(
             IEnumerable<string> symbols, System.Threading.CancellationToken ct = default)
@@ -362,9 +397,12 @@ namespace StockPicker.Services
                 }
                 first = false;
 
-                var fundamentals = await GetFundamentalsAsync(sym, ct);
+                var (fundamentals, authFailed) = await TryGetFundamentalsAsync(sym, ct);
                 if (fundamentals != null)
                     result[sym.ToUpperInvariant()] = fundamentals;
+
+                // The key itself is the problem — no point walking the rest of the list.
+                if (authFailed) break;
             }
 
             return result;

@@ -155,6 +155,16 @@ namespace StockPicker.Desktop.ViewModels
         public bool IsKeyInvalid => _keyTestState == KeyTestState.Invalid;
 
         /// <summary>
+        /// Records that something outside Settings found this key unusable — currently the
+        /// background fundamentals pass, which gets a 401/403 and gives up.
+        ///
+        /// This is why the verdict can appear without the user pressing Test: the scan already
+        /// paid for the answer, so Settings may as well show it rather than make them ask again.
+        /// Still silent — inline text only, never a dialog.
+        /// </summary>
+        public void MarkKeyInvalid() => KeyTestState = KeyTestState.Invalid;
+
+        /// <summary>
         /// Blank keys short-circuit to Invalid without a network round-trip; everything else
         /// defers to <see cref="KeyValidator"/>. Never throws — a probe that blows up is
         /// simply a key that doesn't work.
