@@ -244,6 +244,169 @@ namespace StockPicker.Services
             return result;
         }
 
+        // ── Fundamental metrics ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Fetches the most recent annual fundamental ratios for <paramref name="symbol"/>
+        /// from GET /stock/metric?symbol={sym}&amp;metric=all.
+        ///
+        /// Each ratio lives under <c>series.annual.{key}</c> as an array of
+        /// <c>{ "period": "YYYY-MM-DD", "v": number|null }</c> objects.  Array order is
+        /// not guaranteed, so entries are sorted by period descending and the first
+        /// non-null value is returned.
+        ///
+        /// On any non-200 response (including 401/403 from an unsupported free-tier plan),
+        /// or on parse failure, returns null — never throws to the caller.
+        ///
+        /// On the FIRST successful parse, raw ratio values are logged via
+        /// <see cref="Debug.WriteLine"/> so units can be confirmed on first run.
+        /// </summary>
+        public async Task<FinnhubFundamentals?> GetFundamentalsAsync(
+            string symbol, System.Threading.CancellationToken ct = default)
+        {
+            try
+            {
+                var url = $"{BaseUrl}/stock/metric" +
+                          $"?symbol={Uri.EscapeDataString(symbol)}" +
+                          $"&metric=all" +
+                          $"&token={Uri.EscapeDataString(_apiKey)}";
+
+                using var request  = new HttpRequestMessage(HttpMethod.Get, url);
+                using var response = await _http.SendAsync(request, ct);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Debug.WriteLine(
+                        $"[Finnhub] GetFundamentalsAsync({symbol}) non-200: {(int)response.StatusCode}");
+                    return null;
+                }
+
+                var json = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(json);
+
+                if (!doc.RootElement.TryGetProperty("series", out var series))
+                {
+                    Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}): no 'series' key.");
+                    return null;
+                }
+
+                // Prefer annual; fall back to quarterly when annual has no entries.
+                JsonElement metricSeries;
+                if (series.TryGetProperty("annual", out var annual) &&
+                    annual.ValueKind == JsonValueKind.Object)
+                {
+                    metricSeries = annual;
+                }
+                else if (series.TryGetProperty("quarterly", out var quarterly) &&
+                         quarterly.ValueKind == JsonValueKind.Object)
+                {
+                    metricSeries = quarterly;
+                }
+                else
+                {
+                    Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}): no annual/quarterly series.");
+                    return null;
+                }
+
+                var de  = LatestSeriesValue(metricSeries, "totalDebtToEquity");
+                var nde = LatestSeriesValue(metricSeries, "netDebtToTotalEquity");
+                var roe = LatestSeriesValue(metricSeries, "roe");
+                var cr  = LatestSeriesValue(metricSeries, "currentRatio");
+
+                // Log raw values on first success so units can be verified on first live run.
+                Debug.WriteLine(
+                    $"[Finnhub units] {symbol} totalDebtToEquity raw={de} roe raw={roe}");
+
+                return new FinnhubFundamentals
+                {
+                    DebtToEquity    = de,
+                    NetDebtToEquity = nde,
+                    ReturnOnEquity  = roe,
+                    CurrentRatio    = cr,
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                // Scan superseded — swallow silently.
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Finnhub] GetFundamentalsAsync({symbol}) error: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Fetches fundamentals for each symbol in <paramref name="symbols"/> sequentially,
+        /// throttled to ≤60 calls/min (1 100 ms gap between calls).
+        ///
+        /// Returns a dictionary keyed by upper-case symbol containing only non-null results.
+        /// Never throws; cancellation via <paramref name="ct"/> exits cleanly.
+        /// </summary>
+        public async Task<Dictionary<string, FinnhubFundamentals>> GetFundamentalsBatchAsync(
+            IEnumerable<string> symbols, System.Threading.CancellationToken ct = default)
+        {
+            var result = new Dictionary<string, FinnhubFundamentals>(StringComparer.OrdinalIgnoreCase);
+            bool first = true;
+
+            foreach (var sym in symbols)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                // Throttle: 60 calls/min safe rate — skip delay before the very first call.
+                if (!first)
+                {
+                    try { await Task.Delay(1100, ct); }
+                    catch (OperationCanceledException) { break; }
+                }
+                first = false;
+
+                var fundamentals = await GetFundamentalsAsync(sym, ct);
+                if (fundamentals != null)
+                    result[sym.ToUpperInvariant()] = fundamentals;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Reads a Finnhub metric series array for <paramref name="key"/> and returns
+        /// the value from the most recent period that has a non-null entry.
+        ///
+        /// Array order is NOT guaranteed — entries are sorted by period string descending
+        /// (ISO 8601 dates sort correctly as strings) before taking the first non-null value.
+        /// </summary>
+        private static double? LatestSeriesValue(JsonElement series, string key)
+        {
+            if (!series.TryGetProperty(key, out var arr) ||
+                arr.ValueKind != JsonValueKind.Array)
+                return null;
+
+            // Collect (period, v) pairs where v is a non-null number.
+            var entries = new List<(string period, double v)>();
+            foreach (var element in arr.EnumerateArray())
+            {
+                if (!element.TryGetProperty("period", out var periodEl) ||
+                    periodEl.ValueKind != JsonValueKind.String)
+                    continue;
+
+                if (!element.TryGetProperty("v", out var vEl) ||
+                    vEl.ValueKind != JsonValueKind.Number)
+                    continue;
+
+                var period = periodEl.GetString();
+                if (period == null) continue;
+                entries.Add((period, vEl.GetDouble()));
+            }
+
+            if (entries.Count == 0) return null;
+
+            // Most-recent-first — ISO date strings sort lexicographically (no parsing needed).
+            entries.Sort((a, b) => string.Compare(b.period, a.period, StringComparison.Ordinal));
+            return entries[0].v;
+        }
+
         // ── JSON helpers ──────────────────────────────────────────────────────────
 
         private static string? GetString(JsonElement el, string key) =>

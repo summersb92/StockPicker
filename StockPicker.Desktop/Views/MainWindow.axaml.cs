@@ -188,7 +188,11 @@ public partial class MainWindow : Window
         _recColumnToggles[25] = vm.ColShortRatio;
         _recColumnToggles[26] = vm.ColIV;
         _recColumnToggles[27] = vm.ColTheta;
-        _recColumnToggles[28] = vm.ColReasoning;
+        _recColumnToggles[28] = vm.ColCashToMktCap;
+        _recColumnToggles[29] = vm.ColDebtToEquity;
+        _recColumnToggles[30] = vm.ColNetDebtToEquity;
+        _recColumnToggles[31] = vm.ColRoe;
+        _recColumnToggles[32] = vm.ColReasoning;
     }
 
     private void ApplyColumnVisibility()
@@ -229,7 +233,7 @@ public partial class MainWindow : Window
             [11] = "Confidence",
             [12] = "BuyDate",
             [13] = "SellDate",
-            [28] = "Reasoning",
+            [32] = "Reasoning",
         });
 
         // Compact recommendations grid (narrow layout): fewer columns, same source of truth.

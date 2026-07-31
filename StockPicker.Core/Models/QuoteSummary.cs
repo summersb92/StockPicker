@@ -32,6 +32,7 @@ namespace StockPicker.Models
 
         // ── Valuation ─────────────────────────────────────────────────────────
         public long?    MarketCap         { get; set; }   // marketCap
+        public decimal? TotalCash         { get; set; }   // totalCash
         public double?  PERatio           { get; set; }   // trailingPE
         public double?  ForwardPE         { get; set; }   // forwardPE
         public double?  EPS               { get; set; }   // epsTrailingTwelveMonths

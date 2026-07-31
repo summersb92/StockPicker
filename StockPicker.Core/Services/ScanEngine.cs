@@ -274,6 +274,7 @@ namespace StockPicker.Services
                 rec.ShortRatio       = qs.ShortRatio;
                 rec.ImpliedVolatility = qs.ImpliedVolatility;
                 rec.Theta             = qs.Theta;
+                rec.TotalCash         = qs.TotalCash;
             }
 
             // Always backfill name/sector from the universe lookup — Yahoo's quote
