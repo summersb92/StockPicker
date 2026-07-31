@@ -7,7 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-07-31
+
+Major version because the desktop app users actually download changed out from under
+them: the WPF build is gone, replaced by an Avalonia one that ships under a different
+binary and now also targets Linux. That cutover was prepared under 1.2.0 below but never
+released, so **2.0.0 is the first build to carry it** — anyone upgrading from 1.1.0 gets
+both sets of changes at once.
+
+### Breaking
+
+- **The WPF desktop app is retired.** `StockPicker.Desktop` (Avalonia) is now *the*
+  desktop app and ships as self-contained single-file builds for **win-x64 and
+  linux-x64**. This is not a drop-in replacement for a 1.1.0 install: the shipped
+  executable and its layout changed, so unzip fresh rather than overwriting in place.
+  Settings and portfolio files are unchanged and are picked up as before. Full detail in
+  the 1.2.0 notes below.
+
+### Added
+
+- **Analyst consensus and 1-year price targets.** The Details pane shows rating counts,
+  the consensus label, the target range, and upside vs. the current price. The
+  recommendations grid gains sortable **1Y Target** and **Target Δ%** columns, so the
+  list can be ranked by how much upside analysts still see.
+  *Coverage limit:* Yahoo only exposes price targets on a one-symbol-per-request
+  endpoint (verified — `targetMeanPrice` is absent from the batch quote call), so these
+  are fetched for the **top 20 rows only** and are blank below that.
+- **Cash-heavy & low-debt fundamental screen** (contributed by Dakota Cooper). Cash as a
+  percentage of market cap from Yahoo, plus debt/equity, net-debt/equity, and ROE from
+  Finnhub, surfaced as optional columns with a filter toggle and a capped ≤5pp confidence
+  tilt from the cash signal. A sortable **Cash+LowDebt** column groups qualifying stocks
+  together without hiding the rest. Finnhub ratios cover the top 20 rows only, by design,
+  so partial data cannot bias the ranking; see
+  `docs/adr/ADR-001-cash-heavy-low-debt-data-sources.md`.
+- **Post-earnings rebound scan.** The Earnings tab gains an **Upcoming / Just reported**
+  mode selector. "Just reported" lists stocks that reported within a lookback window
+  (default 5 days) ranked by a 0–100 **Rebound** score — how hard it sold off, how much
+  analyst upside remains, and whether EPS beat anyway — for finding good quarters the
+  market punished. Columns for days-since, move since earnings, drawdown, EPS vs.
+  estimate, and target delta. EPS surprise prefers Finnhub and falls back to Yahoo;
+  a blank EPS cell means *not published yet*, never a miss, and cannot flag a stock.
+  Upcoming mode and its scoring are unchanged.
+- **API key testing.** Each keyed data source in Settings gets a **Test** button with a
+  quiet inline verdict (`Key OK` / `Invalid key`). Previously an expired or revoked key
+  failed completely silently in release builds — the only diagnostic was a
+  `Debug.WriteLine` the compiler strips — leaving blank columns indistinguishable from
+  "no key configured". Finnhub is probed against the fundamentals endpoint the screen
+  actually needs, so a key entitled to quotes but not fundamentals reports as invalid
+  rather than passing and leaving columns empty.
+- **Action and sector filters.** Dropdown filters on the recommendations grid and Daily
+  Picks, composing with the existing search box and Buy-Only toggle, plus a row count
+  ("Showing 12 of 200"), a Clear button, and an empty-state when filters match nothing.
+
+### Fixed
+
+- **Startup crash on the Avalonia app.** A hand-written `InitializeComponent` shadowed
+  the generated one, leaving every named control null and throwing a
+  `NullReferenceException` before the window appeared.
+- **Chart not refreshing on range change.** Switching 1Y → 1W (or back) left the previous
+  range rendered until another interaction forced a redraw.
+- **Wasted requests on a dead Finnhub key.** The fundamentals pass walked all 20 symbols
+  at a 1.1 s throttle collecting the same 401 twenty times — about 21 s per scan,
+  measured. It now stops at the first 401/403 (21 s → 0.04 s) and remembers the rejected
+  key for the session, so the cost is one request rather than one per scan. The rejection
+  also surfaces in Settings instead of staying invisible.
+
+### Changed
+
+- **Test coverage and CI.** 171 Core tests run on a Windows + Linux matrix.
+
 ## [1.2.0] — 2026-07-23
+
+> **Never released as a build.** The version was bumped and these notes written, but no
+> `v1.2.0` tag was ever pushed. Everything below ships in 2.0.0 above.
 
 ### Changed
 

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Cross-platform (Windows + Linux + macOS) command-line interface for
        running each strategy and generating the News briefing. Depends only on
@@ -15,7 +15,7 @@
     <AssemblyName>stockpicker</AssemblyName>
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>1.2.0</Version>
+    <Version>2.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
